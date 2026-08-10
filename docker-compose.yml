@@ -1,6 +1,6 @@
 services:
   cloudmail-token-broker:
-    image: registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker:${IMAGE_TAG:-latest}
+    image: ${IMAGE_NAME:?please set IMAGE_NAME in .env}
     pull_policy: always
     container_name: cloudmail-token-broker
     restart: unless-stopped
