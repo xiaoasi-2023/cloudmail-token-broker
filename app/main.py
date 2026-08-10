@@ -62,6 +62,8 @@ def create_app(
         )
 
     def require_client(authorization: str | None) -> ClientIdentity:
+        if resolved_settings.broker_public_access:
+            return ClientIdentity(client_id="public")
         return auth.require_client(authorization)
 
     def require_admin(authorization: str | None) -> None:

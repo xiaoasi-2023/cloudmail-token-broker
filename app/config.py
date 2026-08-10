@@ -48,6 +48,7 @@ class Settings:
     cloudmail_admin_password: str
     broker_admin_key: str
     broker_client_keys: dict[str, str]
+    broker_public_access: bool = False
     token_cache_seconds: int = 1500
     token_refresh_skew_seconds: int = 120
     request_timeout_seconds: int = 15
@@ -66,6 +67,7 @@ class Settings:
             cloudmail_admin_password=_env("CLOUDMAIL_ADMIN_PASSWORD"),
             broker_admin_key=_env("BROKER_ADMIN_KEY"),
             broker_client_keys=_client_keys(),
+            broker_public_access=_bool_env("BROKER_PUBLIC_ACCESS", False),
             token_cache_seconds=_int_env("TOKEN_CACHE_SECONDS", 1500, 60, 86400),
             token_refresh_skew_seconds=_int_env("TOKEN_REFRESH_SKEW_SECONDS", 120, 0, 3600),
             request_timeout_seconds=_int_env("REQUEST_TIMEOUT_SECONDS", 15, 1, 120),
@@ -87,13 +89,11 @@ class Settings:
             missing.append("CLOUDMAIL_ADMIN_EMAIL")
         if not self.cloudmail_admin_password:
             missing.append("CLOUDMAIL_ADMIN_PASSWORD")
-        if not self.broker_admin_key:
-            missing.append("BROKER_ADMIN_KEY")
-        if not self.broker_client_keys:
+        if not self.broker_public_access and not self.broker_client_keys:
             missing.append("BROKER_CLIENT_KEYS_JSON")
         if missing:
             raise RuntimeError(f"缺少必要环境变量: {', '.join(missing)}")
-        if len(self.broker_admin_key) < 32:
+        if self.broker_admin_key and len(self.broker_admin_key) < 32:
             raise RuntimeError("BROKER_ADMIN_KEY 长度不能少于 32 个字符")
         short_client_ids = [
             client_id
@@ -107,7 +107,7 @@ class Settings:
             )
         if len(set(self.broker_client_keys.values())) != len(self.broker_client_keys):
             raise RuntimeError("BROKER_CLIENT_KEYS_JSON 中不同客户端不能共用同一个密钥")
-        if self.broker_admin_key in self.broker_client_keys.values():
+        if self.broker_admin_key and self.broker_admin_key in self.broker_client_keys.values():
             raise RuntimeError("BROKER_ADMIN_KEY 不能与 Broker Client Key 相同")
         if self.token_refresh_skew_seconds >= self.token_cache_seconds:
             raise RuntimeError("TOKEN_REFRESH_SKEW_SECONDS 必须小于 TOKEN_CACHE_SECONDS")

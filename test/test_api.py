@@ -31,6 +31,7 @@ def settings(**overrides) -> Settings:
         "cloudmail_admin_password": "cloudmail-password-secret",
         "broker_admin_key": "broker-admin-secret",
         "broker_client_keys": {"image2api": "image2api-secret"},
+        "broker_public_access": False,
         "token_cache_seconds": 600,
         "token_refresh_skew_seconds": 30,
         "token_rate_limit_per_minute": 60,
@@ -53,6 +54,57 @@ def test_invalid_client_key_returns_401() -> None:
     assert response.status_code == 401
     assert response.json()["code"] == "BROKER_UNAUTHORIZED"
     assert fake.calls == 0
+
+
+def test_public_access_allows_token_without_authorization() -> None:
+    fake = FakeCloudMailClient(["cloudmail-token-secret"])
+    with build_client(
+        fake,
+        broker_public_access=True,
+        broker_admin_key="",
+        broker_client_keys={},
+    ) as client:
+        token_response = client.post("/v1/token")
+        compat_response = client.post("/api/public/genToken", json={})
+
+    assert token_response.status_code == 200
+    assert token_response.json()["data"]["token"] == "cloudmail-token-secret"
+    assert compat_response.status_code == 200
+    assert compat_response.json() == {"code": 200, "data": {"token": "cloudmail-token-secret"}}
+    assert fake.calls == 1
+
+
+def test_public_access_allows_refresh_without_authorization() -> None:
+    fake = FakeCloudMailClient(["token-a", "token-b"])
+    with build_client(
+        fake,
+        broker_public_access=True,
+        broker_admin_key="",
+        broker_client_keys={},
+    ) as client:
+        first = client.post("/v1/token").json()["data"]
+        refreshed = client.post(
+            "/v1/token/refresh",
+            json={"version": first["version"]},
+        )
+
+    assert refreshed.status_code == 200
+    assert refreshed.json()["data"]["token"] == "token-b"
+    assert fake.calls == 2
+
+
+def test_admin_endpoint_is_disabled_when_admin_key_is_empty() -> None:
+    fake = FakeCloudMailClient(["cloudmail-token-secret"])
+    with build_client(
+        fake,
+        broker_public_access=True,
+        broker_admin_key="",
+        broker_client_keys={},
+    ) as client:
+        response = client.get("/admin/status")
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "ADMIN_DISABLED"
 
 
 def test_token_and_compatibility_endpoints_share_cache() -> None:
