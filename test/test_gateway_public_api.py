@@ -12,7 +12,7 @@ from app.gateway.gateway_schemas import CreateMailboxRequest
 from app.gateway.mailbox_service import MailboxGatewayService
 from app.gateway.mailbox_token import MailboxTokenSigner
 from app.gateway.public_api import create_gateway_router
-from app.gateway.sqlite_business_store import SQLiteGatewayBusinessStore
+from app.gateway.database_business_store import DatabaseGatewayBusinessStore
 
 
 class PlainCipher:
@@ -42,30 +42,31 @@ class FakeRegistry:
         return self.provider
 
 
-def seed_database(path: Path) -> tuple[GatewayDatabase, SQLiteGatewayBusinessStore]:
+def seed_database(path: Path) -> tuple[GatewayDatabase, DatabaseGatewayBusinessStore]:
     database = GatewayDatabase(path)
     database.initialize()
     cipher = PlainCipher()
     now = datetime.now(UTC).isoformat()
     with database.transaction() as connection:
-        cursor = connection.execute(
+        result = connection.execute(
             """INSERT INTO cloudmail_instances
             (name, base_url, admin_email, admin_password_encrypted, proxy_url,
              verify_tls, enabled, health_status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, '', 1, 1, 'healthy', ?, ?)""",
+            VALUES (?, ?, ?, ?, '', 1, 1, 'healthy', ?, ?)
+            RETURNING id""",
             ("mail-a", "https://mail.test", "admin@test", cipher.encrypt("secret"), now, now),
         )
-        instance_id = int(cursor.lastrowid)
+        instance_id = int(result.fetchone()["id"])
         connection.execute(
             """INSERT INTO mail_domains
             (instance_id, domain, enabled, weight, status, created_at, updated_at)
             VALUES (?, 'one.test', 1, 100, 'healthy', ?, ?)""",
             (instance_id, now, now),
         )
-    return database, SQLiteGatewayBusinessStore(database, cipher)
+    return database, DatabaseGatewayBusinessStore(database, cipher)
 
 
-def test_sqlite_store_maps_instance_domain_mailbox_and_health(tmp_path: Path) -> None:
+def test_database_store_maps_instance_domain_mailbox_and_health(tmp_path: Path) -> None:
     database, store = seed_database(tmp_path / "gateway.db")
     domain = store.list_domains()[0]
     instance = store.get_instance(domain.instance_id)

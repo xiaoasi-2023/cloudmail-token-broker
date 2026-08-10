@@ -33,9 +33,7 @@ RUN apt-get update \
     && chmod +x /usr/local/bin/docker-entrypoint.sh \
     && pip install --no-cache-dir . \
     && addgroup --system --gid 10001 broker \
-    && adduser --system --uid 10001 --ingroup broker --no-create-home broker \
-    && mkdir -p /app/data \
-    && chown -R 10001:10001 /app/data
+    && adduser --system --uid 10001 --ingroup broker --no-create-home broker
 
 EXPOSE 8080
 

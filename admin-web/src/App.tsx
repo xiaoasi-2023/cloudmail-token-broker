@@ -455,7 +455,7 @@ function LogsPage() {
 
 function SettingsPage() {
   return <div className="settings-grid">
-    <Card title="运行方式"><Descriptions column={1} size="small"><Descriptions.Item label="管理接口">同域 /admin-api</Descriptions.Item><Descriptions.Item label="管理会话">HttpOnly Cookie</Descriptions.Item><Descriptions.Item label="数据存储">SQLite 持久化目录</Descriptions.Item><Descriptions.Item label="敏感配置">服务端主密钥加密保存</Descriptions.Item></Descriptions></Card>
+    <Card title="运行方式"><Descriptions column={1} size="small"><Descriptions.Item label="管理接口">同域 /admin-api</Descriptions.Item><Descriptions.Item label="管理会话">HttpOnly Cookie</Descriptions.Item><Descriptions.Item label="数据存储">服务器 PostgreSQL 连接池</Descriptions.Item><Descriptions.Item label="敏感配置">服务端主密钥加密保存</Descriptions.Item></Descriptions></Card>
     <Card title="安全边界"><div className="policy-list"><div><SafetyCertificateOutlined /><span><b>管理端必须鉴权</b><small>管理账号与业务公开接口相互隔离</small></span></div><div><ApiOutlined /><span><b>上游凭据不外发</b><small>调用方不会获得 CloudMail Token 和管理员密码</small></span></div><div><DatabaseOutlined /><span><b>日志默认脱敏</b><small>不记录验证码、邮件正文和会话凭证</small></span></div></div></Card>
     <Alert className="settings-notice" type="info" showIcon message="部署级设置通过服务器环境变量管理" description="当前后端尚未提供在线修改系统密钥、会话有效期和数据库位置的接口。为避免界面产生无法持久化的假配置，本页只展示真实运行约束；修改后请在宝塔容器编排中重建服务。" />
   </div>;

@@ -15,22 +15,26 @@ def test_cleanup_supports_dry_run_and_apply(tmp_path: Path) -> None:
     expired = (now - timedelta(hours=1)).isoformat()
 
     with database.transaction() as connection:
-        instance_cursor = connection.execute(
+        instance_result = connection.execute(
             """INSERT INTO cloudmail_instances
             (name, base_url, admin_email, admin_password_encrypted, created_at, updated_at)
-            VALUES ('cleanup-instance', 'https://mail.test', 'admin@test', 'encrypted', ?, ?)""",
+            VALUES ('cleanup-instance', 'https://mail.test', 'admin@test', 'encrypted', ?, ?)
+            RETURNING id""",
             (old, old),
         )
-        domain_cursor = connection.execute(
+        instance_id = int(instance_result.fetchone()["id"])
+        domain_result = connection.execute(
             """INSERT INTO mail_domains(instance_id, domain, created_at, updated_at)
-            VALUES (?, 'cleanup.test', ?, ?)""",
-            (instance_cursor.lastrowid, old, old),
+            VALUES (?, 'cleanup.test', ?, ?)
+            RETURNING id""",
+            (instance_id, old, old),
         )
+        domain_id = int(domain_result.fetchone()["id"])
         connection.execute(
             """INSERT INTO mailboxes
             (id, address, domain_id, instance_id, status, created_at, expires_at, updated_at)
             VALUES ('mbx-old-active', 'old@cleanup.test', ?, ?, 'active', ?, ?, ?)""",
-            (domain_cursor.lastrowid, instance_cursor.lastrowid, old, expired, old),
+            (domain_id, instance_id, old, expired, old),
         )
         connection.execute(
             """INSERT INTO gateway_request_logs
@@ -69,5 +73,5 @@ def test_cleanup_supports_dry_run_and_apply(tmp_path: Path) -> None:
     assert applied.mailboxes_marked_expired == 1
     assert applied.mailboxes_removed == 1
     with database.read() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM admin_sessions").fetchone()[0] == 0
-        assert connection.execute("SELECT COUNT(*) FROM gateway_request_logs").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) AS total FROM admin_sessions").fetchone()["total"] == 0
+        assert connection.execute("SELECT COUNT(*) AS total FROM gateway_request_logs").fetchone()["total"] == 0

@@ -1,64 +1,159 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator, Mapping, Sequence
+
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.engine import Connection, CursorResult, Engine
+from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
+from sqlalchemy.pool import StaticPool
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 1
 logger = logging.getLogger("xiaoasi_mail_gateway.database")
 
 
+class DatabaseResult:
+    """统一 SQLAlchemy 查询结果，向业务层返回可按字段名读取的行。"""
+
+    def __init__(self, result: CursorResult[Any]) -> None:
+        self._result = result
+
+    @property
+    def rowcount(self) -> int:
+        return int(self._result.rowcount or 0)
+
+    def fetchone(self) -> Mapping[str, Any] | None:
+        return self._result.mappings().fetchone()
+
+    def fetchall(self) -> list[Mapping[str, Any]]:
+        return list(self._result.mappings().fetchall())
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class DatabaseConnection:
+    """将项目原有问号占位 SQL 转换为 SQLAlchemy 命名参数。"""
+
+    def __init__(self, connection: Connection) -> None:
+        self._connection = connection
+
+    @staticmethod
+    def _prepare(
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] | None,
+    ) -> tuple[str, Mapping[str, Any]]:
+        if params is None:
+            return sql, {}
+        if isinstance(params, Mapping):
+            return sql, params
+
+        values = list(params)
+        expected = sql.count("?")
+        if expected != len(values):
+            raise ValueError(f"SQL 参数数量不匹配: 占位符 {expected}，参数 {len(values)}")
+        pieces = sql.split("?")
+        bindings = {f"p{index}": value for index, value in enumerate(values)}
+        converted = pieces[0]
+        for index, piece in enumerate(pieces[1:]):
+            converted += f":p{index}{piece}"
+        return converted, bindings
+
+    def execute(
+        self,
+        sql: str,
+        params: Sequence[Any] | Mapping[str, Any] | None = None,
+    ) -> DatabaseResult:
+        statement, bindings = self._prepare(sql, params)
+        return DatabaseResult(self._connection.execute(text(statement), bindings))
+
+    def executescript(self, script: str) -> None:
+        for statement in script.split(";"):
+            if statement.strip():
+                self._connection.execute(text(statement))
+
+
 class GatewayDatabase:
-    """负责 SQLite 连接、事务和结构初始化。"""
+    """负责 PostgreSQL/SQLite 连接、事务和结构初始化。生产环境使用 PostgreSQL。"""
 
-    def __init__(self, path: str | Path) -> None:
-        self.path = str(path)
-        if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, url_or_path: str | Path) -> None:
+        raw_value = str(url_or_path)
+        self.url = self._normalize_url(raw_value)
+        self.engine = self._create_engine(self.url)
+        self.dialect_name = self.engine.dialect.name
 
-    def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
-        if self.path != ":memory:":
-            connection.execute("PRAGMA journal_mode = WAL")
-        return connection
+    @staticmethod
+    def _normalize_url(value: str) -> str:
+        if value == ":memory:":
+            return "sqlite+pysqlite:///:memory:"
+        if "://" not in value:
+            path = Path(value)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return "sqlite+pysqlite:///" + path.resolve().as_posix()
+        if value.startswith("postgresql://"):
+            return "postgresql+psycopg://" + value.removeprefix("postgresql://")
+        return value
+
+    @staticmethod
+    def _create_engine(url: str) -> Engine:
+        if url == "sqlite+pysqlite:///:memory:":
+            engine = create_engine(
+                url,
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+        elif url.startswith("sqlite"):
+            engine = create_engine(url, connect_args={"check_same_thread": False})
+        else:
+            engine = create_engine(
+                url,
+                pool_pre_ping=True,
+                pool_size=10,
+                max_overflow=20,
+                pool_timeout=15,
+                pool_recycle=1800,
+            )
+
+        if url.startswith("sqlite"):
+            @event.listens_for(engine, "connect")
+            def configure_sqlite(dbapi_connection, _connection_record) -> None:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
+                cursor.execute("PRAGMA busy_timeout = 10000")
+                if url != "sqlite+pysqlite:///:memory:":
+                    cursor.execute("PRAGMA journal_mode = WAL")
+                cursor.close()
+
+        return engine
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        connection = self.connect()
-        try:
-            connection.execute("BEGIN")
-            yield connection
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+    def transaction(self) -> Iterator[DatabaseConnection]:
+        with self.engine.begin() as connection:
+            yield DatabaseConnection(connection)
 
     @contextmanager
-    def read(self) -> Iterator[sqlite3.Connection]:
-        connection = self.connect()
-        try:
-            yield connection
-        finally:
-            connection.close()
+    def read(self) -> Iterator[DatabaseConnection]:
+        with self.engine.connect() as connection:
+            yield DatabaseConnection(connection)
 
     def initialize(self) -> None:
+        id_definition = (
+            "BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY"
+            if self.dialect_name == "postgresql"
+            else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        )
         with self.transaction() as connection:
             connection.executescript(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS gateway_schema (
                     version INTEGER NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS cloudmail_instances (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id {id_definition},
                     name TEXT NOT NULL UNIQUE,
                     base_url TEXT NOT NULL,
                     admin_email TEXT NOT NULL,
@@ -74,8 +169,8 @@ class GatewayDatabase:
                 );
 
                 CREATE TABLE IF NOT EXISTS mail_domains (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    instance_id INTEGER NOT NULL REFERENCES cloudmail_instances(id) ON DELETE CASCADE,
+                    id {id_definition},
+                    instance_id BIGINT NOT NULL REFERENCES cloudmail_instances(id) ON DELETE CASCADE,
                     domain TEXT NOT NULL UNIQUE,
                     enabled INTEGER NOT NULL DEFAULT 1,
                     weight INTEGER NOT NULL DEFAULT 100 CHECK(weight BETWEEN 1 AND 10000),
@@ -93,8 +188,8 @@ class GatewayDatabase:
                 CREATE TABLE IF NOT EXISTS mailboxes (
                     id TEXT PRIMARY KEY,
                     address TEXT NOT NULL UNIQUE,
-                    domain_id INTEGER NOT NULL REFERENCES mail_domains(id),
-                    instance_id INTEGER NOT NULL REFERENCES cloudmail_instances(id),
+                    domain_id BIGINT NOT NULL REFERENCES mail_domains(id),
+                    instance_id BIGINT NOT NULL REFERENCES cloudmail_instances(id),
                     purpose TEXT NOT NULL DEFAULT '',
                     source TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'active',
@@ -114,14 +209,14 @@ class GatewayDatabase:
                 );
 
                 CREATE TABLE IF NOT EXISTS gateway_request_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id {id_definition},
                     request_id TEXT NOT NULL,
                     endpoint TEXT NOT NULL,
                     method TEXT NOT NULL,
                     source TEXT NOT NULL DEFAULT '',
                     mailbox_id TEXT,
-                    instance_id INTEGER,
-                    domain_id INTEGER,
+                    instance_id BIGINT,
+                    domain_id BIGINT,
                     status_code INTEGER NOT NULL,
                     duration_ms INTEGER NOT NULL DEFAULT 0,
                     error_code TEXT NOT NULL DEFAULT '',
@@ -138,7 +233,7 @@ class GatewayDatabase:
                 );
 
                 CREATE TABLE IF NOT EXISTS admin_audit_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id {id_definition},
                     username TEXT NOT NULL,
                     action TEXT NOT NULL,
                     target_type TEXT NOT NULL DEFAULT '',
@@ -146,7 +241,6 @@ class GatewayDatabase:
                     detail TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
                 );
-
                 """
             )
             current = connection.execute("SELECT version FROM gateway_schema LIMIT 1").fetchone()
@@ -157,9 +251,8 @@ class GatewayDatabase:
                 current_version = int(current["version"])
 
             if current_version > SCHEMA_VERSION:
-                raise RuntimeError(f"不支持的 Gateway 数据库版本: {current['version']}")
+                raise RuntimeError(f"不支持的 Gateway 数据库版本: {current_version}")
 
-            self._repair_additive_schema(connection)
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS idx_domains_instance ON mail_domains(instance_id);
@@ -170,91 +263,15 @@ class GatewayDatabase:
             )
             connection.execute("UPDATE gateway_schema SET version = ?", (SCHEMA_VERSION,))
             if current_version != SCHEMA_VERSION:
-                logger.info("gateway_database_schema_upgraded from=%s to=%s", current_version, SCHEMA_VERSION)
+                logger.info(
+                    "gateway_database_schema_upgraded dialect=%s from=%s to=%s",
+                    self.dialect_name,
+                    current_version,
+                    SCHEMA_VERSION,
+                )
 
-    @staticmethod
-    def _column_names(connection: sqlite3.Connection, table: str) -> set[str]:
-        return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
+    def dispose(self) -> None:
+        self.engine.dispose()
 
-    def _add_missing_columns(
-        self,
-        connection: sqlite3.Connection,
-        table: str,
-        columns: dict[str, str],
-    ) -> None:
-        existing = self._column_names(connection, table)
-        for name, definition in columns.items():
-            if name not in existing:
-                connection.execute(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}')
-                logger.info("gateway_database_column_added table=%s column=%s", table, name)
 
-    def _repair_additive_schema(self, connection: sqlite3.Connection) -> None:
-        """补齐早期镜像创建的 SQLite 表字段，避免持久化旧库升级后管理接口报 500。"""
-
-        self._add_missing_columns(
-            connection,
-            "cloudmail_instances",
-            {
-                "proxy_url": "TEXT NOT NULL DEFAULT ''",
-                "verify_tls": "INTEGER NOT NULL DEFAULT 1",
-                "enabled": "INTEGER NOT NULL DEFAULT 1",
-                "health_status": "TEXT NOT NULL DEFAULT 'unknown'",
-                "last_checked_at": "TEXT",
-                "last_error": "TEXT NOT NULL DEFAULT ''",
-                "created_at": "TEXT NOT NULL DEFAULT ''",
-                "updated_at": "TEXT NOT NULL DEFAULT ''",
-            },
-        )
-        self._add_missing_columns(
-            connection,
-            "mail_domains",
-            {
-                "instance_id": "INTEGER REFERENCES cloudmail_instances(id) ON DELETE CASCADE",
-                "enabled": "INTEGER NOT NULL DEFAULT 1",
-                "weight": "INTEGER NOT NULL DEFAULT 100",
-                "status": "TEXT NOT NULL DEFAULT 'unknown'",
-                "failure_count": "INTEGER NOT NULL DEFAULT 0",
-                "cooldown_until": "TEXT",
-                "last_used_at": "TEXT",
-                "success_count": "INTEGER NOT NULL DEFAULT 0",
-                "failure_total": "INTEGER NOT NULL DEFAULT 0",
-                "remark": "TEXT NOT NULL DEFAULT ''",
-                "created_at": "TEXT NOT NULL DEFAULT ''",
-                "updated_at": "TEXT NOT NULL DEFAULT ''",
-            },
-        )
-        self._add_missing_columns(
-            connection,
-            "mailboxes",
-            {
-                "purpose": "TEXT NOT NULL DEFAULT ''",
-                "source": "TEXT NOT NULL DEFAULT ''",
-                "status": "TEXT NOT NULL DEFAULT 'active'",
-                "verification_status": "TEXT NOT NULL DEFAULT 'pending'",
-                "provider_reference": "TEXT NOT NULL DEFAULT ''",
-                "created_at": "TEXT NOT NULL DEFAULT ''",
-                "expires_at": "TEXT",
-                "updated_at": "TEXT NOT NULL DEFAULT ''",
-            },
-        )
-        self._add_missing_columns(
-            connection,
-            "gateway_request_logs",
-            {
-                "source": "TEXT NOT NULL DEFAULT ''",
-                "mailbox_id": "TEXT",
-                "instance_id": "INTEGER",
-                "domain_id": "INTEGER",
-                "duration_ms": "INTEGER NOT NULL DEFAULT 0",
-                "error_code": "TEXT NOT NULL DEFAULT ''",
-                "error_message": "TEXT NOT NULL DEFAULT ''",
-                "created_at": "TEXT NOT NULL DEFAULT ''",
-            },
-        )
-
-        instance_ids = [row["id"] for row in connection.execute("SELECT id FROM cloudmail_instances ORDER BY id")]
-        if len(instance_ids) == 1:
-            connection.execute(
-                "UPDATE mail_domains SET instance_id = ? WHERE instance_id IS NULL",
-                (instance_ids[0],),
-            )
+__all__ = ["DatabaseIntegrityError", "GatewayDatabase"]

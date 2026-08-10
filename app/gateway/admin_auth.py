@@ -75,14 +75,14 @@ class AdminSessionService:
             return None
         now = _now().isoformat()
         token_hash = self._token_hash(token)
-        with self.database.transaction() as connection:
+        # 管理页面会并发请求实例、域名和概览。鉴权热路径必须保持只读，
+        # 否则多个 SELECT 后再 UPDATE 的延迟事务会互相争抢 SQLite 写锁。
+        with self.database.read() as connection:
             row = connection.execute(
                 "SELECT username, expires_at FROM admin_sessions WHERE token_hash = ?", (token_hash,),
             ).fetchone()
             if row is None or row["expires_at"] <= now:
-                connection.execute("DELETE FROM admin_sessions WHERE token_hash = ?", (token_hash,))
                 return None
-            connection.execute("UPDATE admin_sessions SET last_seen_at = ? WHERE token_hash = ?", (now, token_hash))
         return str(row["username"])
 
     def logout(self, token: str | None) -> None:

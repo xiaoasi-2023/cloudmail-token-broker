@@ -11,7 +11,7 @@ from app.gateway.business_models import (
 
 
 class GatewayBusinessStore(Protocol):
-    """业务服务依赖的持久化边界，SQLite 实现可在主入口接入。"""
+    """业务服务依赖的持久化边界，生产环境由 PostgreSQL 实现。"""
 
     def list_domains(self) -> list[MailDomainConfig]: ...
 

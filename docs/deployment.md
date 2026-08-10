@@ -3,7 +3,7 @@
 ## 1. 准备目录
 
 ```bash
-mkdir -p /www/docker/cloudmail-token-broker/data
+mkdir -p /www/docker/cloudmail-token-broker
 cd /www/docker/cloudmail-token-broker
 ```
 
@@ -17,8 +17,7 @@ cd /www/docker/cloudmail-token-broker
 ```text
 /www/docker/cloudmail-token-broker/
 ├── docker-compose.yml
-├── .env
-└── data/
+└── .env
 ```
 
 镜像由 GitHub 推送触发阿里云自动构建，服务器无需上传源码。
@@ -26,13 +25,13 @@ cd /www/docker/cloudmail-token-broker
 ## 2. 环境变量
 
 ```dotenv
-IMAGE_TAG=latest
+IMAGE_NAME=registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker:latest
 
 REQUEST_TIMEOUT_SECONDS=15
 LOG_LEVEL=INFO
 
 GATEWAY_ENABLED=true
-GATEWAY_DATABASE_PATH=/app/data/xiaoasi-mail.db
+DATABASE_URL=postgresql://数据库用户:数据库密码@host.docker.internal:5432/数据库名?connect_timeout=10
 
 DATA_ENCRYPTION_KEY=<至少32字节随机值>
 MAILBOX_SESSION_SECRET=<另一条至少32字节随机值>
@@ -56,6 +55,21 @@ MAILBOX_POLL_RATE_LIMIT_PER_MINUTE=600
 
 本地项目的 `.env` 已生成随机值，但上传前仍应确认管理员密码。CloudMail 实例地址、管理员凭据、代理和 TLS 配置全部在 `/admin/` 页面维护，不写入 `.env`。
 
+`DATABASE_URL` 连接服务器已经安装的 PostgreSQL。本项目不会创建 PostgreSQL 容器。数据库密码包含 `@`、`:`、`/`、`?`、`#` 等字符时，需要先进行 URL 编码。
+
+服务器 PostgreSQL 需要允许 Docker 网桥访问。推荐让容器通过 `host.docker.internal` 连接宿主机，并在 PostgreSQL 中确认：
+
+- `listen_addresses` 包含 Docker 网桥可访问的监听地址；
+- `pg_hba.conf` 允许实际 Docker 网段连接指定数据库；
+- 服务器防火墙不需要向公网开放 5432，只需允许本机 Docker 网桥。
+
+数据库尚未创建时，可由 PostgreSQL 管理员执行：
+
+```sql
+CREATE USER gateway_user WITH PASSWORD '替换为高强度数据库密码';
+CREATE DATABASE xiaoasi_mail OWNER gateway_user;
+```
+
 ## 3. 宝塔容器编排
 
 进入：
@@ -70,7 +84,7 @@ MAILBOX_POLL_RATE_LIMIT_PER_MINUTE=600
 - 目录：`/www/docker/cloudmail-token-broker`
 - Compose：使用项目中的 `docker-compose.yml`
 
-容器启动脚本会自动调整 `/app/data` 权限，然后以非 root 用户运行应用。
+容器启动后以非 root 用户运行应用，并通过 SQLAlchemy 连接池连接服务器 PostgreSQL。
 
 启动：
 
@@ -119,7 +133,7 @@ https://mail-api.example.com/admin/
 
 不同 CloudMail 实例分别新增，每个实例可以维护多个域名。
 
-服务启动时会自动检查并升级持久化 SQLite 表结构。旧镜像创建的数据库缺少域名状态、统计或实例关联字段时，会补齐字段并升级数据库版本，不需要删除 `/app/data/xiaoasi-mail.db`。
+服务首次连接空 PostgreSQL 数据库时会自动创建数据表、索引和结构版本记录。当前不迁移旧 SQLite 数据，CloudMail 实例和邮箱域名需要在管理端重新配置。
 
 ## 6. 验证命令
 
@@ -153,25 +167,20 @@ docker compose ps
 docker compose logs --tail=100 cloudmail-token-broker
 ```
 
-SQLite 数据位于宿主机：
-
-```text
-/www/docker/cloudmail-token-broker/data/xiaoasi-mail.db
-```
-
-重建容器不会删除该文件。
+业务数据存放在服务器 PostgreSQL。重建网关容器不会删除数据库数据。
 
 ## 8. 备份
 
-升级前备份：
+升级前备份 `.env`，并使用 PostgreSQL 自带工具备份数据库：
 
 ```bash
 cd /www/docker/cloudmail-token-broker
-cp -a data "data-backup-$(date +%Y%m%d-%H%M%S)"
 cp -a .env ".env.backup-$(date +%Y%m%d-%H%M%S)"
+PGPASSWORD='数据库密码' pg_dump -h 127.0.0.1 -U 数据库用户 -d 数据库名 \
+  -Fc -f "xiaoasi-mail-$(date +%Y%m%d-%H%M%S).dump"
 ```
 
-`.env` 中的数据加密密钥必须与数据库备份一起保留，否则恢复数据库后无法解密实例密码。
+`.env` 中的数据加密密钥必须与 PostgreSQL 备份一起保留，否则恢复数据库后无法解密实例密码。
 
 ## 9. 数据清理定时任务
 
@@ -226,9 +235,9 @@ ADMIN_COOKIE_SECURE=true
 
 如果只在本机 HTTP 测试，可临时设置为 `false`。
 
-### 数据库无法写入
+### PostgreSQL 无法连接
 
-检查宿主机 `data/` 目录和容器日志。镜像入口会自动把挂载目录调整为应用用户可写。
+检查 `DATABASE_URL`、数据库用户名和密码、PostgreSQL 监听地址、`pg_hba.conf`、Docker 网段及容器日志。容器内的 `127.0.0.1` 指向容器自身，连接宿主机数据库应使用 `host.docker.internal` 或服务器可达 IP。
 
 ### 实例测试失败
 
@@ -250,4 +259,4 @@ ADMIN_COOKIE_SECURE=true
 
 ### 能否运行多个网关副本
 
-当前版本使用 SQLite、进程内 Token 缓存和进程内并发锁，只支持单容器副本。不要设置多 worker 或多副本。
+PostgreSQL 已支持并发数据库访问，但 CloudMail Token 缓存和刷新锁仍在进程内。当前仍建议保持一个网关容器、一个 Uvicorn worker；后续如需多副本，需要再增加跨进程 Token 协调。

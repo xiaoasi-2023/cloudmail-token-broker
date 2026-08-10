@@ -11,7 +11,7 @@
 
 本方案建设一个独立的完整邮箱网关。图片站、Kirox、Windows EXE 及其他调用方只对接 Xiaoasi Mail Gateway，不了解 CloudMail 的管理员凭据、Token、接口路径和响应结构。
 
-截至 2026-08-10 已完成：SQLite 持久化、多实例独立 Token、域名路由、幂等建箱、邮箱会话凭证、验证码查询、管理端登录、实例和域名管理、邮箱记录、请求日志、Docker 多阶段构建及数据保留清理脚本。尚待完成的外部工作是接入真实 CloudMail 实例、图片站/Kirox Provider 迁移以及生产宝塔点验。
+截至 2026-08-10 已完成：服务器 PostgreSQL 持久化、多实例独立 Token、域名路由、幂等建箱、邮箱会话凭证、验证码查询、管理端登录、实例和域名管理、邮箱记录、请求日志、Docker 多阶段构建及数据保留清理脚本。尚待完成的外部工作是图片站/Kirox Provider 迁移以及生产宝塔点验。
 
 当前仓库名称和镜像名称继续保留，避免破坏 GitHub 到阿里云自动构建及宝塔部署链路；产品名称统一使用 Xiaoasi Mail Gateway。
 
@@ -82,7 +82,7 @@
 - 调用方自行指定完整邮箱地址；
 - 向普通调用方开放完整邮件正文；
 - 多容器副本和分布式锁；
-- 第一阶段即引入 PostgreSQL、Redis 或消息队列；
+- Redis、消息队列和多副本分布式协调；
 - 多管理员角色和复杂 RBAC；
 - 将任意第三方邮箱 API 透传成通用代理接口。
 
@@ -711,22 +711,22 @@ MAILBOX_SESSION_SECRET=<邮箱会话签名密钥>
 
 ## 14. 数据库和部署
 
-第一阶段使用 SQLite，保持单容器部署简单：
+生产数据统一使用服务器现有 PostgreSQL，Docker Compose 不创建数据库容器：
 
 ```text
-/app/data/xiaoasi-mail.db
+DATABASE_URL=postgresql://数据库用户:数据库密码@host.docker.internal:5432/数据库名
 ```
 
-Compose 增加：
+Compose 仅增加宿主机地址映射：
 
 ```yaml
-volumes:
-  - ./data:/app/data
+extra_hosts:
+  - "host.docker.internal:host-gateway"
 ```
 
-当前容器使用 `read_only: true`，数据库目录必须通过可写 volume 挂载。数据库迁移在容器启动时执行，且必须保证重复执行安全。
+当前容器继续使用 `read_only: true`，业务数据不写入容器文件系统。数据库结构在启动时自动初始化，且必须保证重复执行安全。
 
-单实例 SQLite 足以支持第一阶段：
+PostgreSQL 负责以下共享持久化数据：
 
 - CloudMail 实例配置；
 - 域名配置；
@@ -735,7 +735,7 @@ volumes:
 - 请求日志；
 - 管理端操作。
 
-未来需要运行多个网关副本时，再迁移 PostgreSQL，并将 Token 缓存锁、限流和邮箱会话状态迁移到共享存储。第一阶段明确只运行一个容器副本。
+数据库已具备并发访问能力。未来需要运行多个网关副本时，还需要将 Token 缓存锁和限流迁移到 Redis 或 PostgreSQL 协调层；当前仍明确只运行一个容器副本。
 
 ## 15. 管理端技术方案
 
@@ -745,7 +745,7 @@ volumes:
 - 管理端：React + TypeScript + Ant Design；
 - 构建：Docker 多阶段构建前端静态资源；
 - 部署：FastAPI 同域提供 `/admin` 静态页面和 `/admin-api`；
-- 数据：SQLite；
+- 数据：服务器 PostgreSQL + SQLAlchemy 连接池；
 - 样式：信息密度适中的桌面管理台，优先表格、状态标签、抽屉表单和明确反馈。
 
 同域部署可以避免单独处理跨域、第二个容器和两套发布流程。管理端所有保存、启停、测试连接和删除操作必须展示加载状态和成功或失败反馈。
@@ -846,7 +846,7 @@ Windows EXE 和其他项目只保存网关地址、域名选择参数、`mailbox
 
 ### 阶段一：基础数据与多实例
 
-- 引入 SQLite 和数据库迁移；
+- 引入服务器 PostgreSQL、SQLAlchemy 连接池和自动建表；
 - 实现实例和域名数据模型；
 - 实现管理员敏感字段加密；
 - 实现按 CloudMail 实例隔离的 Token 缓存和并发刷新锁；

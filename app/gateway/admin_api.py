@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -8,6 +7,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from app.gateway.admin_auth import AdminSessionService
+from app.gateway.database import DatabaseIntegrityError
 from app.gateway.repository import GatewayRepository
 
 
@@ -122,7 +122,7 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
     async def create_instance(body: InstanceCreateRequest, username: str = Depends(current_admin)):
         try:
             item = context.repository.create_instance(body.model_dump())
-        except sqlite3.IntegrityError as exc:
+        except DatabaseIntegrityError as exc:
             raise HTTPException(status_code=409, detail={"code": "INSTANCE_CONFLICT", "message": "实例名称已存在"}) from exc
         context.repository.audit(username, "instance.create", "instance", str(item["id"]))
         return {"ok": True, "data": item}
@@ -138,7 +138,7 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
     async def update_instance(instance_id: int, body: InstanceUpdateRequest, username: str = Depends(current_admin)):
         try:
             item = context.repository.update_instance(instance_id, body.model_dump(exclude_none=True))
-        except sqlite3.IntegrityError as exc:
+        except DatabaseIntegrityError as exc:
             raise HTTPException(status_code=409, detail={"code": "INSTANCE_CONFLICT", "message": "实例名称已存在"}) from exc
         if item is None:
             raise not_found("实例")
@@ -149,7 +149,7 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
     async def delete_instance(instance_id: int, username: str = Depends(current_admin)):
         try:
             deleted = context.repository.delete_instance(instance_id)
-        except sqlite3.IntegrityError as exc:
+        except DatabaseIntegrityError as exc:
             raise HTTPException(
                 status_code=409,
                 detail={"code": "INSTANCE_IN_USE", "message": "实例存在邮箱记录，不能直接删除"},
@@ -194,7 +194,7 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
             raise not_found("所属实例")
         try:
             item = context.repository.create_domain(body.model_dump())
-        except sqlite3.IntegrityError as exc:
+        except DatabaseIntegrityError as exc:
             raise HTTPException(status_code=409, detail={"code": "DOMAIN_CONFLICT", "message": "域名已存在"}) from exc
         context.repository.audit(username, "domain.create", "domain", str(item["id"]))
         return {"ok": True, "data": item}
@@ -206,7 +206,7 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
             raise not_found("所属实例")
         try:
             item = context.repository.update_domain(domain_id, data)
-        except sqlite3.IntegrityError as exc:
+        except DatabaseIntegrityError as exc:
             raise HTTPException(status_code=409, detail={"code": "DOMAIN_CONFLICT", "message": "域名已存在或数据无效"}) from exc
         if item is None:
             raise not_found("域名")
@@ -217,7 +217,7 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
     async def delete_domain(domain_id: int, username: str = Depends(current_admin)):
         try:
             deleted = context.repository.delete_domain(domain_id)
-        except sqlite3.IntegrityError as exc:
+        except DatabaseIntegrityError as exc:
             raise HTTPException(
                 status_code=409,
                 detail={"code": "DOMAIN_IN_USE", "message": "域名存在邮箱记录，不能直接删除"},

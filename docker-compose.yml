@@ -6,8 +6,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    volumes:
-      - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8788:8080"
     security_opt:

@@ -12,7 +12,7 @@ from app.main import create_app
 def gateway_settings(tmp_path: Path) -> Settings:
     return Settings(
         gateway_enabled=True,
-        gateway_database_path=str(tmp_path / "gateway.db"),
+        database_url="sqlite+pysqlite:///" + (tmp_path / "gateway.db").as_posix(),
         data_encryption_key="data-encryption-key-for-tests-123456",
         mailbox_session_secret="mailbox-session-secret-for-tests-12345",
         admin_username="admin",

@@ -27,7 +27,7 @@ from app.gateway.cloudmail_provider import CloudMailProviderRegistry
 from app.gateway.mailbox_service import MailboxGatewayService
 from app.gateway.mailbox_token import MailboxTokenSigner
 from app.gateway.public_api import create_gateway_router
-from app.gateway.sqlite_business_store import SQLiteGatewayBusinessStore
+from app.gateway.database_business_store import DatabaseGatewayBusinessStore
 from app.rate_limit import InMemoryRateLimiter
 
 
@@ -49,11 +49,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     admin_router = None
 
     if resolved_settings.gateway_enabled:
-        database = GatewayDatabase(resolved_settings.gateway_database_path)
+        database = GatewayDatabase(resolved_settings.database_url)
         database.initialize()
         cipher = FernetSecretCipher(resolved_settings.data_encryption_key)
         gateway_repository = GatewayRepository(database, cipher)
-        business_store = SQLiteGatewayBusinessStore(database, cipher)
+        business_store = DatabaseGatewayBusinessStore(database, cipher)
         gateway_providers = CloudMailProviderRegistry()
         gateway_service = MailboxGatewayService(
             business_store,

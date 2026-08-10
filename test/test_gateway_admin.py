@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -130,43 +130,22 @@ def test_domain_list_supports_empty_and_instance_filter(tmp_path: Path) -> None:
     assert filtered.json()["data"][0]["instance_name"] == "instance-a"
 
 
-def test_initialize_repairs_early_gateway_database_schema(tmp_path: Path) -> None:
-    database_path = tmp_path / "legacy.db"
-    with sqlite3.connect(database_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE gateway_schema (version INTEGER NOT NULL);
-            INSERT INTO gateway_schema(version) VALUES (1);
-            CREATE TABLE cloudmail_instances (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                base_url TEXT NOT NULL,
-                admin_email TEXT NOT NULL,
-                admin_password_encrypted TEXT NOT NULL
-            );
-            INSERT INTO cloudmail_instances(name, base_url, admin_email, admin_password_encrypted)
-            VALUES ('legacy-instance', 'https://legacy.example.com', 'admin@example.com', 'encrypted:terces');
-            CREATE TABLE mail_domains (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                domain TEXT NOT NULL UNIQUE
-            );
-            INSERT INTO mail_domains(domain) VALUES ('legacy-mail.example.com');
-            """
-        )
+def test_parallel_admin_reads_do_not_trigger_sqlite_write_conflicts(tmp_path: Path) -> None:
+    client, repository = build_client(tmp_path)
+    login(client)
+    instance = repository.create_instance(
+        {"name": "instance-a", "base_url": "https://a.example.com", "admin_email": "a@example.com", "admin_password": "secret"}
+    )
+    repository.create_domain({"instance_id": instance["id"], "domain": "a.example.com"})
 
-    database = GatewayDatabase(database_path)
-    database.initialize()
-    repository = GatewayRepository(database, TestCipher())
+    def load_admin_data(index: int):
+        path = "/admin-api/domains" if index % 2 == 0 else "/admin-api/instances"
+        return client.get(path)
 
-    with database.read() as connection:
-        version = connection.execute("SELECT version FROM gateway_schema").fetchone()["version"]
-        domain_columns = {row["name"] for row in connection.execute("PRAGMA table_info(mail_domains)")}
-    domains = repository.list_domains()
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        responses = list(executor.map(load_admin_data, range(64)))
 
-    assert version == 2
-    assert {"instance_id", "status", "remark", "success_count", "failure_total"} <= domain_columns
-    assert domains[0]["instance_name"] == "legacy-instance"
-    assert domains[0]["status"] == "unknown"
+    assert {response.status_code for response in responses} == {200}
 
 
 def test_duplicate_instance_and_domain_return_conflict(tmp_path: Path) -> None:

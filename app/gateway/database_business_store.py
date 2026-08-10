@@ -23,8 +23,8 @@ def _parse_time(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
-class SQLiteGatewayBusinessStore:
-    """将邮箱网关业务协议适配到现有 Gateway SQLite 表。"""
+class DatabaseGatewayBusinessStore:
+    """将邮箱网关业务协议适配到 Gateway PostgreSQL 数据表。"""
 
     def __init__(
         self,

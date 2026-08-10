@@ -31,7 +31,7 @@ class Settings:
     request_timeout_seconds: int = 15
     log_level: str = "INFO"
     gateway_enabled: bool = True
-    gateway_database_path: str = "data/xiaoasi-mail.db"
+    database_url: str = ""
     data_encryption_key: str = ""
     mailbox_session_secret: str = ""
     mailbox_session_ttl_seconds: int = 1800
@@ -51,7 +51,7 @@ class Settings:
             request_timeout_seconds=_int_env("REQUEST_TIMEOUT_SECONDS", 15, 1, 120),
             log_level=_env("LOG_LEVEL", "INFO").upper(),
             gateway_enabled=_bool_env("GATEWAY_ENABLED", True),
-            gateway_database_path=_env("GATEWAY_DATABASE_PATH", "data/xiaoasi-mail.db"),
+            database_url=_env("DATABASE_URL"),
             data_encryption_key=_env("DATA_ENCRYPTION_KEY"),
             mailbox_session_secret=_env("MAILBOX_SESSION_SECRET"),
             mailbox_session_ttl_seconds=_int_env("MAILBOX_SESSION_TTL_SECONDS", 1800, 300, 86400),
@@ -77,8 +77,10 @@ class Settings:
     def validate(self) -> None:
         if self.gateway_enabled:
             gateway_missing: list[str] = []
-            if not self.gateway_database_path:
-                gateway_missing.append("GATEWAY_DATABASE_PATH")
+            if not self.database_url:
+                gateway_missing.append("DATABASE_URL")
+            elif not self.database_url.startswith(("postgresql://", "postgresql+psycopg://")):
+                raise RuntimeError("DATABASE_URL 必须使用 PostgreSQL 连接地址")
             if len(self.data_encryption_key.encode("utf-8")) < 32 or _is_placeholder(self.data_encryption_key):
                 gateway_missing.append("DATA_ENCRYPTION_KEY（至少 32 字节）")
             if len(self.mailbox_session_secret.encode("utf-8")) < 32 or _is_placeholder(self.mailbox_session_secret):

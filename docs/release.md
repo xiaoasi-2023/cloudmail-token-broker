@@ -71,7 +71,7 @@ docker inspect -f '{{.Config.Image}}' cloudmail-token-broker
 
 ## 5. 回滚
 
-如果阿里云保留了上一版本标签，将 `.env` 中的 `IMAGE_TAG` 改为上一版本，再执行：
+如果阿里云保留了上一版本标签，将 `.env` 中的 `IMAGE_NAME` 改为上一版本的完整镜像地址，再执行：
 
 ```bash
 docker compose pull

@@ -37,17 +37,19 @@ class GatewayRepository:
         if not password:
             raise ValueError("管理员密码不能为空")
         with self.database.transaction() as connection:
-            cursor = connection.execute(
+            inserted = connection.execute(
                 """INSERT INTO cloudmail_instances
                 (name, base_url, admin_email, admin_password_encrypted, proxy_url, verify_tls, enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id""",
                 (
                     data["name"].strip(), data["base_url"].rstrip("/"), data["admin_email"].strip(),
                     self.cipher.encrypt(password), data.get("proxy_url", "").strip(),
                     int(data.get("verify_tls", True)), int(data.get("enabled", True)), now, now,
                 ),
             )
-            row = connection.execute("SELECT * FROM cloudmail_instances WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            instance_id = int(inserted.fetchone()["id"])
+            row = connection.execute("SELECT * FROM cloudmail_instances WHERE id = ?", (instance_id,)).fetchone()
         return _public_instance(row)
 
     def list_instances(self) -> list[dict[str, Any]]:
@@ -109,12 +111,14 @@ class GatewayRepository:
         now = utc_now()
         domain = data["domain"].strip().lower().rstrip(".")
         with self.database.transaction() as connection:
-            cursor = connection.execute(
+            inserted = connection.execute(
                 """INSERT INTO mail_domains(instance_id, domain, enabled, weight, remark, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                RETURNING id""",
                 (data["instance_id"], domain, int(data.get("enabled", True)), data.get("weight", 100), data.get("remark", ""), now, now),
             )
-            row = connection.execute("SELECT * FROM mail_domains WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            domain_id = int(inserted.fetchone()["id"])
+            row = connection.execute("SELECT * FROM mail_domains WHERE id = ?", (domain_id,)).fetchone()
         return _public_domain(row)
 
     def list_domains(self, instance_id: int | None = None) -> list[dict[str, Any]]:

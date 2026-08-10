@@ -38,34 +38,34 @@ def execute_cleanup(
     with database.transaction() as connection:
         expired_idempotency = int(
             connection.execute(
-                "SELECT COUNT(*) FROM idempotency_records WHERE expires_at <= ?",
+                "SELECT COUNT(*) AS total FROM idempotency_records WHERE expires_at <= ?",
                 (current.isoformat(),),
-            ).fetchone()[0]
+            ).fetchone()["total"]
         )
         expired_admin_sessions = int(
             connection.execute(
-                "SELECT COUNT(*) FROM admin_sessions WHERE expires_at <= ?",
+                "SELECT COUNT(*) AS total FROM admin_sessions WHERE expires_at <= ?",
                 (current.isoformat(),),
-            ).fetchone()[0]
+            ).fetchone()["total"]
         )
         mailboxes_marked_expired = int(
             connection.execute(
-                "SELECT COUNT(*) FROM mailboxes WHERE status='active' AND expires_at <= ?",
+                "SELECT COUNT(*) AS total FROM mailboxes WHERE status='active' AND expires_at <= ?",
                 (current.isoformat(),),
-            ).fetchone()[0]
+            ).fetchone()["total"]
         )
         request_logs_removed = int(
             connection.execute(
-                "SELECT COUNT(*) FROM gateway_request_logs WHERE created_at < ?",
+                "SELECT COUNT(*) AS total FROM gateway_request_logs WHERE created_at < ?",
                 (request_log_cutoff.isoformat(),),
-            ).fetchone()[0]
+            ).fetchone()["total"]
         )
         mailboxes_removed = int(
             connection.execute(
-                """SELECT COUNT(*) FROM mailboxes
+                """SELECT COUNT(*) AS total FROM mailboxes
                 WHERE created_at < ? AND status IN ('released', 'expired', 'failed')""",
                 (mailbox_cutoff.isoformat(),),
-            ).fetchone()[0]
+            ).fetchone()["total"]
         )
 
         if apply:
@@ -124,7 +124,7 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = Settings.from_env()
-    database = GatewayDatabase(settings.gateway_database_path)
+    database = GatewayDatabase(settings.database_url)
     database.initialize()
     result = execute_cleanup(
         database,

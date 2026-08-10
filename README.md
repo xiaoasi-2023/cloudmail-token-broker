@@ -13,7 +13,7 @@ Xiaoasi Mail Gateway 是一个支持多 CloudMail 实例、多邮箱域名和可
 - 使用 `Idempotency-Key` 避免网络重试重复建箱；
 - 创建邮箱后返回短期、单邮箱范围的 `mailboxToken`；
 - 统一查询 OpenAI、Grok 等验证码；
-- SQLite 持久化实例、域名、邮箱、请求日志和管理会话；
+- 服务器 PostgreSQL 持久化实例、域名、邮箱、请求日志和管理会话；
 - CloudMail 管理员密码加密保存；
 - React + Ant Design 管理端；
 - 提供 dry-run/apply 数据保留清理脚本。
@@ -47,15 +47,14 @@ registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker:latest
 ```text
 cloudmail-token-broker/
 ├── docker-compose.yml
-├── .env
-└── data/
+└── .env
 ```
 
 上传 `.env` 前必须确认：
 
 ```dotenv
 GATEWAY_ENABLED=true
-GATEWAY_DATABASE_PATH=/app/data/xiaoasi-mail.db
+DATABASE_URL=postgresql://数据库用户:数据库密码@host.docker.internal:5432/数据库名?connect_timeout=10
 
 DATA_ENCRYPTION_KEY=<至少32字节随机值>
 MAILBOX_SESSION_SECRET=<另一条至少32字节随机值>
@@ -66,6 +65,8 @@ ADMIN_COOKIE_SECURE=true
 ```
 
 本地 `.env` 已被 Git 忽略，不会提交。
+
+本项目不会在 Docker Compose 中创建 PostgreSQL。`DATABASE_URL` 必须指向服务器已经安装并创建好的 PostgreSQL 数据库；容器访问宿主机数据库时优先使用 `host.docker.internal`。
 
 启动：
 
