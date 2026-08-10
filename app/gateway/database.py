@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.pool import StaticPool
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 logger = logging.getLogger("xiaoasi_mail_gateway.database")
 
 
@@ -241,6 +241,16 @@ class GatewayDatabase:
                     detail TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS gateway_client_keys (
+                    id {id_definition},
+                    name TEXT NOT NULL UNIQUE,
+                    api_key TEXT NOT NULL UNIQUE,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_used_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             current = connection.execute("SELECT version FROM gateway_schema LIMIT 1").fetchone()
@@ -259,6 +269,7 @@ class GatewayDatabase:
                 CREATE INDEX IF NOT EXISTS idx_mailboxes_created ON mailboxes(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_request_logs_created ON gateway_request_logs(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
+                CREATE INDEX IF NOT EXISTS idx_client_keys_enabled ON gateway_client_keys(enabled);
                 """
             )
             connection.execute("UPDATE gateway_schema SET version = ?", (SCHEMA_VERSION,))

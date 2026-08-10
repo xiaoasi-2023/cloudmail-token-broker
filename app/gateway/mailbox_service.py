@@ -33,38 +33,41 @@ class MailboxGatewayService:
         *,
         mailbox_ttl_seconds: int = 1800,
         max_create_attempts: int = 3,
+        max_address_attempts: int = 5,
     ) -> None:
         self.store = store
         self.providers = providers
         self.token_signer = token_signer
         self.mailbox_ttl_seconds = mailbox_ttl_seconds
         self.max_create_attempts = max(1, max_create_attempts)
+        self.max_address_attempts = max(1, max_address_attempts)
         self.router = DomainRouter(store)
         self._idempotency_locks: dict[str, tuple[asyncio.Lock, int]] = {}
         self._idempotency_locks_guard = asyncio.Lock()
 
-    async def create_mailbox(self, request: CreateMailboxRequest, idempotency_key: str | None) -> MailboxData:
-        if not idempotency_key:
-            return await self._create_mailbox(request, None)
+    async def create_mailbox(self, request: CreateMailboxRequest, idempotency_key: str | None, client_name: str = "") -> MailboxData:
+        internal_key = f"{client_name}:{idempotency_key}" if client_name and idempotency_key else idempotency_key
+        if not internal_key:
+            return await self._create_mailbox(request, None, client_name)
         async with self._idempotency_locks_guard:
             lock, users = self._idempotency_locks.get(
-                idempotency_key,
+                internal_key,
                 (asyncio.Lock(), 0),
             )
-            self._idempotency_locks[idempotency_key] = (lock, users + 1)
+            self._idempotency_locks[internal_key] = (lock, users + 1)
         try:
             async with lock:
-                return await self._create_mailbox(request, idempotency_key)
+                return await self._create_mailbox(request, internal_key, client_name)
         finally:
             async with self._idempotency_locks_guard:
-                current = self._idempotency_locks.get(idempotency_key)
+                current = self._idempotency_locks.get(internal_key)
                 if current is not None and current[0] is lock:
                     if current[1] <= 1:
-                        self._idempotency_locks.pop(idempotency_key, None)
+                        self._idempotency_locks.pop(internal_key, None)
                     else:
-                        self._idempotency_locks[idempotency_key] = (lock, current[1] - 1)
+                        self._idempotency_locks[internal_key] = (lock, current[1] - 1)
 
-    async def _create_mailbox(self, request: CreateMailboxRequest, idempotency_key: str | None) -> MailboxData:
+    async def _create_mailbox(self, request: CreateMailboxRequest, idempotency_key: str | None, client_name: str = "") -> MailboxData:
         request_hash = _request_hash(request)
         if idempotency_key:
             existing = self.store.get_idempotency(idempotency_key)
@@ -78,15 +81,35 @@ class MailboxGatewayService:
         candidates = self.router.candidates(request.domain, request.domains)
         last_error: ProviderRequestError | None = None
         for domain, instance in candidates[: self.max_create_attempts]:
-            address = generate_mailbox_address(request.prefix, domain.domain)
-            password = generate_mailbox_password()
-            try:
-                client = await self.providers.client_for(instance)
-                await client.create_mailbox(address, password)
-            except ProviderRequestError as exc:
-                self.store.mark_domain_failure(domain.id, "MAILBOX_CREATE_FAILED")
-                last_error = exc
-                if request.domain or not exc.retryable:
+            address = ""
+            candidate_error: ProviderRequestError | None = None
+            client = await self.providers.client_for(instance)
+            for _address_attempt in range(self.max_address_attempts):
+                address = generate_mailbox_address(
+                    domain.domain,
+                    pattern=request.address_pattern,
+                    name=request.name,
+                    prefix=request.prefix,
+                )
+                password = generate_mailbox_password()
+                try:
+                    created = await client.create_mailbox(address, password)
+                except ProviderRequestError as exc:
+                    self.store.mark_domain_failure(domain.id, "MAILBOX_CREATE_FAILED")
+                    candidate_error = exc
+                    last_error = exc
+                    break
+                if created is not False:
+                    break
+            else:
+                # 用户名碰撞不代表域名异常，尝试下一个候选域名。
+                last_error = ProviderRequestError("创建邮箱", retryable=True)
+                if request.domain:
+                    break
+                continue
+
+            if candidate_error is not None:
+                if request.domain or not candidate_error.retryable:
                     break
                 continue
 
@@ -97,7 +120,7 @@ class MailboxGatewayService:
                 domain_id=domain.id,
                 instance_id=instance.id,
                 purpose=request.purpose.strip().lower(),
-                source=request.source.strip(),
+                source=client_name,
                 provider_reference=address,
                 created_at=now,
                 expires_at=now + timedelta(seconds=self.mailbox_ttl_seconds),
@@ -125,11 +148,13 @@ class MailboxGatewayService:
         mailbox_id: str,
         token: str,
         request: VerificationCodeRequest,
+        client_name: str = "",
     ) -> VerificationCodeData:
         self.token_signer.verify(token, mailbox_id)
         mailbox = self.store.get_mailbox(mailbox_id)
         if mailbox is None:
             raise GatewayBusinessError("MAILBOX_NOT_FOUND", "邮箱记录不存在", 404)
+        self._verify_client(mailbox, client_name)
         if mailbox.status != "active" or mailbox.expires_at <= datetime.now(UTC):
             raise GatewayBusinessError("MAILBOX_SESSION_EXPIRED", "邮箱会话已过期", 401)
         instance = self.store.get_instance(mailbox.instance_id)
@@ -158,11 +183,12 @@ class MailboxGatewayService:
                 return VerificationCodeData(status="pending", verificationCode="")
             await asyncio.sleep(min(request.poll_interval_seconds, max(0, deadline - time.monotonic())))
 
-    def get_mailbox_status(self, mailbox_id: str, token: str) -> MailboxStatusData:
+    def get_mailbox_status(self, mailbox_id: str, token: str, client_name: str = "") -> MailboxStatusData:
         self.token_signer.verify(token, mailbox_id)
         mailbox = self.store.get_mailbox(mailbox_id)
         if mailbox is None:
             raise GatewayBusinessError("MAILBOX_NOT_FOUND", "邮箱记录不存在", 404)
+        self._verify_client(mailbox, client_name)
         status = mailbox.status
         if status == "active" and mailbox.expires_at <= datetime.now(UTC):
             status = "expired"
@@ -177,11 +203,12 @@ class MailboxGatewayService:
             expiresAt=mailbox.expires_at.isoformat(),
         )
 
-    def release_mailbox(self, mailbox_id: str, token: str) -> MailboxStatusData:
+    def release_mailbox(self, mailbox_id: str, token: str, client_name: str = "") -> MailboxStatusData:
         self.token_signer.verify(token, mailbox_id)
         mailbox = self.store.get_mailbox(mailbox_id)
         if mailbox is None:
             raise GatewayBusinessError("MAILBOX_NOT_FOUND", "邮箱记录不存在", 404)
+        self._verify_client(mailbox, client_name)
         self.store.set_mailbox_status(mailbox.id, "released")
         mailbox.status = "released"
         return MailboxStatusData(
@@ -204,6 +231,11 @@ class MailboxGatewayService:
             createdAt=mailbox.created_at.isoformat(),
             expiresAt=mailbox.expires_at.isoformat(),
         )
+
+    @staticmethod
+    def _verify_client(mailbox: MailboxRecord, client_name: str) -> None:
+        if client_name and mailbox.source != client_name:
+            raise GatewayBusinessError("MAILBOX_ACCESS_DENIED", "当前调用密钥无权访问该邮箱", 403)
 
 
 def _request_hash(request: CreateMailboxRequest) -> str:

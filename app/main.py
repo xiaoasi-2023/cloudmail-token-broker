@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 import uuid
@@ -61,7 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             MailboxTokenSigner(resolved_settings.mailbox_session_secret),
             mailbox_ttl_seconds=resolved_settings.mailbox_session_ttl_seconds,
         )
-        gateway_router = create_gateway_router(gateway_service)
+        gateway_router = create_gateway_router(gateway_service, gateway_repository.authenticate_client_key)
         password_hash = resolved_settings.admin_password_hash or hash_admin_password(
             resolved_settings.admin_password
         )
@@ -136,7 +137,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         started = time.perf_counter()
         request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
         if request.method == "POST" and request.url.path == "/admin-api/auth/login":
-            client_key = request.client.host if request.client else "unknown"
+            api_key = request.headers.get("X-API-Key", "")
+            client_key = hashlib.sha256(api_key.encode("utf-8")).hexdigest() if api_key else "missing"
             try:
                 rate_limiter.check(
                     f"gateway:admin-login:{client_key}",
@@ -174,7 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     request_id=request_id,
                     endpoint=request.url.path,
                     method=request.method,
-                    source=request.headers.get("X-Client-Source", ""),
+                    source=str(getattr(request.state, "client_name", "")),
                     status_code=response.status_code,
                     duration_ms=round((time.perf_counter() - started) * 1000),
                 )

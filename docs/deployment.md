@@ -101,7 +101,7 @@ docker compose logs --tail=100 cloudmail-token-broker
 宝塔新建网站，例如：
 
 ```text
-mail-api.example.com
+cloudmail.xiaoasi.xyz
 ```
 
 反向代理：
@@ -115,7 +115,7 @@ http://127.0.0.1:8788
 管理端：
 
 ```text
-https://mail-api.example.com/admin/
+https://cloudmail.xiaoasi.xyz/admin/
 ```
 
 建议给 `/admin/` 和 `/admin-api/` 再增加宝塔访问限制、Cloudflare Access 或固定来源 IP。
@@ -128,8 +128,9 @@ https://mail-api.example.com/admin/
 4. 创建成功后不要关闭抽屉，在“当前实例的邮箱域名”区域添加一个或多个域名；这里新增的域名会自动绑定当前实例。
 5. 设置域名启用状态和调度权重。也可以进入独立“邮箱域名”页面进行跨实例集中维护。
 6. 点击实例列表中的“测试”，确认 `genToken` 成功。
-7. 使用 `/v1/mailboxes` 测试创建邮箱。
-8. 触发测试邮件后验证验证码查询。
+7. 进入“调用密钥”，为测试项目创建一条密钥并复制完整 `X-API-Key`。
+8. 使用 `/v1/mailboxes` 测试创建邮箱。
+9. 触发测试邮件后验证验证码查询。
 
 不同 CloudMail 实例分别新增，每个实例可以维护多个域名。
 
@@ -146,11 +147,11 @@ curl -fsS http://127.0.0.1:8788/healthz
 创建邮箱：
 
 ```bash
-curl -sS -X POST 'https://mail-api.example.com/v1/mailboxes' \
+curl -sS -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: deploy-test-001' \
-  -H 'X-Client-Source: deploy-test' \
-  -d '{"purpose":"openai","prefix":"deploytest","source":"deploy-test"}'
+  -H 'X-API-Key: 替换为管理端创建的调用密钥' \
+  -d '{"purpose":"openai","addressPattern":"name_digits_4","name":"deploytest"}'
 ```
 
 保存返回的 `mailboxId` 和 `mailboxToken`，再查询状态或验证码。

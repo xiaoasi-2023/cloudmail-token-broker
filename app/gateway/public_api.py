@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Header
+from typing import Any, Callable
+
+from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 from app.gateway.business_errors import GatewayBusinessError
@@ -15,12 +17,25 @@ from app.gateway.mailbox_service import MailboxGatewayService
 from app.gateway.mailbox_token import parse_mailbox_authorization
 
 
-def create_gateway_router(service: MailboxGatewayService) -> APIRouter:
+ClientKeyAuthenticator = Callable[[str], dict[str, Any] | None]
+
+
+def create_gateway_router(service: MailboxGatewayService, authenticate_client_key: ClientKeyAuthenticator) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["mail-gateway"])
+
+    def client_name(request: Request, api_key: str | None) -> str:
+        client = authenticate_client_key(api_key or "")
+        if client is None:
+            raise GatewayBusinessError("CLIENT_KEY_INVALID", "调用密钥无效或已停用", 401)
+        name = str(client["name"])
+        request.state.client_name = name
+        return name
 
     @router.post("/mailboxes", response_model=CreateMailboxResponse)
     async def create_mailbox(
         request: CreateMailboxRequest,
+        http_request: Request,
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
         idempotency_key: str | None = Header(
             default=None,
             alias="Idempotency-Key",
@@ -28,7 +43,7 @@ def create_gateway_router(service: MailboxGatewayService) -> APIRouter:
         ),
     ) -> CreateMailboxResponse:
         try:
-            data = await service.create_mailbox(request, idempotency_key)
+            data = await service.create_mailbox(request, idempotency_key, client_name(http_request, x_api_key))
             return CreateMailboxResponse(data=data)
         except GatewayBusinessError as exc:
             return _error_response(exc)
@@ -40,11 +55,13 @@ def create_gateway_router(service: MailboxGatewayService) -> APIRouter:
     async def verification_code(
         mailbox_id: str,
         request: VerificationCodeRequest,
+        http_request: Request,
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> VerificationCodeResponse:
         try:
             token = parse_mailbox_authorization(authorization)
-            data = await service.get_verification_code(mailbox_id, token, request)
+            data = await service.get_verification_code(mailbox_id, token, request, client_name(http_request, x_api_key))
             return VerificationCodeResponse(data=data)
         except GatewayBusinessError as exc:
             return _error_response(exc)
@@ -52,22 +69,26 @@ def create_gateway_router(service: MailboxGatewayService) -> APIRouter:
     @router.get("/mailboxes/{mailbox_id}", response_model=MailboxStatusResponse)
     async def mailbox_status(
         mailbox_id: str,
+        request: Request,
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
         authorization: str | None = Header(default=None, alias="Authorization"),
     ):
         try:
             token = parse_mailbox_authorization(authorization)
-            return MailboxStatusResponse(data=service.get_mailbox_status(mailbox_id, token))
+            return MailboxStatusResponse(data=service.get_mailbox_status(mailbox_id, token, client_name(request, x_api_key)))
         except GatewayBusinessError as exc:
             return _error_response(exc)
 
     @router.delete("/mailboxes/{mailbox_id}", response_model=MailboxStatusResponse)
     async def release_mailbox(
         mailbox_id: str,
+        request: Request,
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
         authorization: str | None = Header(default=None, alias="Authorization"),
     ):
         try:
             token = parse_mailbox_authorization(authorization)
-            return MailboxStatusResponse(data=service.release_mailbox(mailbox_id, token))
+            return MailboxStatusResponse(data=service.release_mailbox(mailbox_id, token, client_name(request, x_api_key)))
         except GatewayBusinessError as exc:
             return _error_response(exc)
 

@@ -1,5 +1,6 @@
 import type {
   CloudMailInstance,
+  ClientKey,
   DomainPayload,
   InstancePayload,
   MailboxRecord,
@@ -76,6 +77,11 @@ export const api = {
     request<ApiEnvelope<MailDomain>>(`/domains/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteDomain: (id: number) => request(`/domains/${id}`, { method: "DELETE" }),
   clearDomainCooldown: (id: number) => request(`/domains/${id}/clear-cooldown`, { method: "POST" }),
+  clientKeys: async () => (await request<ApiEnvelope<ClientKey[]>>("/client-keys")).data,
+  createClientKey: (name: string) => request<ApiEnvelope<ClientKey>>("/client-keys", { method: "POST", body: JSON.stringify({ name }) }),
+  updateClientKey: (id: number, enabled: boolean) => request<ApiEnvelope<ClientKey>>(`/client-keys/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+  regenerateClientKey: (id: number) => request<ApiEnvelope<ClientKey>>(`/client-keys/${id}/regenerate`, { method: "POST" }),
+  deleteClientKey: (id: number) => request(`/client-keys/${id}`, { method: "DELETE" }),
   mailboxes: async (limit = 100, offset = 0) =>
     (await request<ApiEnvelope<MailboxRecord[]>>(`/mailboxes?limit=${limit}&offset=${offset}`)).data,
   requestLogs: async (limit = 100, offset = 0) =>

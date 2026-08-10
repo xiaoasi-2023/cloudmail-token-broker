@@ -41,9 +41,8 @@ button, input, textarea { font: inherit; }
 .sider-footer .ant-btn { color: #929c97; }
 .mobile-drawer { display: none; }
 .mobile-drawer .ant-drawer-body { padding: 0; position: relative; }
-.console-header { height: 82px; padding: 0 32px; display: flex; align-items: center; gap: 20px; background: rgba(244,244,238,.92); border-bottom: 1px solid #d4d5ce; backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 10; }
-.header-title { margin-right: auto; }
-.header-title h3 { margin: 2px 0 0; font-size: 19px; letter-spacing: -.02em; }
+.console-header { height: 64px; padding: 0 32px; display: flex; align-items: center; gap: 20px; background: rgba(244,244,238,.92); border-bottom: 1px solid #d4d5ce; backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 10; }
+.header-console-name { margin-right: auto; }
 .mobile-menu { display: none; }
 .console-content { padding: 34px; max-width: 1680px; width: 100%; margin: 0 auto; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
@@ -54,6 +53,8 @@ button, input, textarea { font: inherit; }
 @keyframes reveal { from { opacity: 0; transform: translateY(7px); } }
 .page-body > .ant-table-wrapper, .page-body > .ant-alert, .page-body > .settings-grid { border: 1px solid #d5d6cf; }
 .toolbar { min-height: 62px; padding: 12px 16px; background: #fffdf8; border: 1px solid #d5d6cf; border-bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.toolbar-copy { display: grid; gap: 3px; }
+.toolbar-copy > .ant-typography:last-child { font-size: 12px; color: #8b928e; }
 .page-alert { margin-bottom: 18px; }
 .primary-cell { min-width: 145px; }
 .primary-cell b { display: block; color: #252c29; font-weight: 600; }
@@ -120,7 +121,7 @@ button, input, textarea { font: inherit; }
   .mobile-drawer { display: block; }
   .desktop-collapse { display: none; }
   .mobile-menu { display: inline-flex; }
-  .console-header { height: 72px; padding: 0 16px; }
+  .console-header { height: 60px; padding: 0 16px; }
   .console-header > .ant-badge { display: none; }
   .console-content { padding: 22px 14px; }
   .page-heading { margin-bottom: 20px; }
@@ -137,7 +138,7 @@ button, input, textarea { font: inherit; }
   .settings-grid > .ant-card:first-child { border-right: 0; border-bottom: 1px solid #d5d6cf; }
 }
 @media (max-width: 560px) {
-  .header-title .section-index { display: none; }
+  .header-console-name { font-size: 10px; }
   .metric-row { grid-template-columns: 1fr; }
   .hero-card .ant-card-body { display: block; }
   .health-dial { margin-top: 24px; }

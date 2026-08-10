@@ -23,9 +23,9 @@
 4. 一个启用状态的邮箱域名只能绑定一个 CloudMail 实例。
 5. 调用方可以不传域名、传一个指定域名，或者传一个域名候选范围。
 6. 调用方不直接选择 CloudMail 实例，网关根据域名自动找到所属实例。
-7. 完整邮箱地址默认由网关生成，调用方最多传入可选前缀。
+7. 完整邮箱地址由网关生成，调用方可以选择内置用户名规则并传入可选姓名基础值，但不能指定完整邮箱地址。
 8. CloudMail 管理员邮箱、管理员密码、Token、邮箱密码和内部接口均不返回给调用方。
-9. 业务调用方不需要预先配置图片站密钥、Kirox 密钥或 EXE 密钥。
+9. 每个业务调用方由管理端创建独立明文调用密钥，所有业务接口必须携带 `X-API-Key`。
 10. 创建邮箱后由网关返回短期、单邮箱范围的 `mailboxToken`，后续查询只能访问该邮箱。
 11. 必须提供独立、受鉴权保护的可视化管理端。
 12. 管理端能够维护 CloudMail 实例、域名、运行状态、邮箱记录和请求日志。
@@ -40,7 +40,7 @@
 ```json
 {
   "type": "xiaoasi_gateway",
-  "api_base": "https://mail-api.example.com"
+  "api_base": "https://cloudmail.xiaoasi.xyz"
 }
 ```
 
@@ -180,7 +180,7 @@ Mailbox            1 ---- N GatewayRequestLog
 | `domain_id` | 外键 | 实际使用的邮箱域名 |
 | `address` | VARCHAR | 完整邮箱地址 |
 | `purpose` | VARCHAR | `openai`、`grok`、`generic` 等用途 |
-| `source` | VARCHAR | 调用来源提示，例如 `image2api`、`kirox` |
+| `source` | VARCHAR | 由已认证调用密钥自动写入的可信调用方名称 |
 | `created_at` | DATETIME | 邮箱创建时间，也是历史邮件过滤基线 |
 | `expires_at` | DATETIME | 网关邮箱会话过期时间 |
 | `status` | VARCHAR | `creating`、`active`、`failed`、`expired`、`deleted` |
@@ -243,7 +243,8 @@ Mailbox            1 ---- N GatewayRequestLog
 {
   "purpose": "openai",
   "domain": "mail-a.example.com",
-  "prefix": "kirox"
+  "addressPattern": "name_digits_4",
+  "name": "kirox"
 }
 ```
 
@@ -265,7 +266,8 @@ Mailbox            1 ---- N GatewayRequestLog
     "mail-c.example.com",
     "mail-e.example.com"
   ],
-  "prefix": "image2api"
+  "addressPattern": "name_digits_4",
+  "name": "image2api"
 }
 ```
 
@@ -283,7 +285,8 @@ Mailbox            1 ---- N GatewayRequestLog
 ```json
 {
   "purpose": "openai",
-  "prefix": "image2api"
+  "addressPattern": "name_digits_4",
+  "name": "image2api"
 }
 ```
 
@@ -331,24 +334,33 @@ Mailbox            1 ---- N GatewayRequestLog
 调用方不传完整地址，网关生成完整邮箱：
 
 ```text
-<清洗后的前缀><时间或随机标识><安全随机串>@<选中域名>
+<清洗后的姓名基础值><规则生成的随机后缀>@<选中域名>
 ```
 
 示例：
 
 ```text
-image2apim8x4p2k9@mail-a.example.com
+image2api4821@mail-a.example.com
 ```
 
-### 8.2 可选前缀
+### 8.2 用户名生成规则
 
-调用方可以传 `prefix`，但网关必须：
+调用方可以传 `addressPattern` 和 `name`。`addressPattern` 默认是 `name_digits_4`，即“姓名基础值 + 4 位数字”。没有提供 `name` 时，网关随机选择内置英文名。当前内置规则包括：
+
+- `name_digits_4`；
+- `name_digits_6`；
+- `name_random_6`；
+- `random_12`；
+- `legacy_prefix_random`。
+
+`prefix` 仅作为旧客户端兼容字段。网关必须：
 
 - 转为小写；
 - 只保留字母和数字；
 - 限制最大长度；
 - 拒绝或替换 `admin`、`root`、`support` 等保留名称；
-- 始终追加随机部分，不能把前缀直接作为完整本地部分。
+- 除纯随机规则外始终追加随机部分，不能把姓名基础值直接作为完整本地部分；
+- 地址已存在时重新生成，不能把已有邮箱当作本次创建成功。
 
 ### 8.3 不开放完整地址生成
 
@@ -380,8 +392,8 @@ Idempotency-Key: register-task-123-attempt-1
   "purpose": "openai",
   "domain": "",
   "domains": [],
-  "prefix": "image2api",
-  "source": "image2api"
+  "addressPattern": "name_digits_4",
+  "name": "image2api"
 }
 ```
 
@@ -392,7 +404,7 @@ Idempotency-Key: register-task-123-attempt-1
   "code": 200,
   "data": {
     "mailboxId": "mbx_01k2example",
-    "address": "image2apim8x4p2k9@mail-a.example.com",
+    "address": "image2api4821@mail-a.example.com",
     "domain": "mail-a.example.com",
     "mailboxToken": "短期单邮箱访问凭证",
     "createdAt": "2026-08-10T08:00:00Z",
@@ -466,7 +478,7 @@ Authorization: Mailbox <mailboxToken>
 
 ## 10. 邮箱访问凭证
 
-调用方无需预先配置长期 Client Key，但创建邮箱后必须使用该邮箱自己的 `mailboxToken`。
+调用方必须配置管理端签发的长期 `X-API-Key`；创建邮箱后还必须使用该邮箱自己的 `mailboxToken`。网关校验邮箱所属调用方，其他有效密钥不能访问该邮箱。
 
 `mailboxToken` 应满足：
 
@@ -673,19 +685,9 @@ CloudMail 实例
 
 ### 12.8 系统设置页面
 
-管理：
+当前系统设置页面只展示真实运行约束，不提供无法持久化的假表单。邮箱会话有效期、创建和查询限流等部署级配置通过服务器环境变量维护；用户名生成规则由调用方在创建邮箱请求中选择。
 
-- 默认邮箱前缀；
-- 邮箱地址生成规则；
-- 邮箱会话有效期；
-- 单次验证码等待上限；
-- 创建和查询限流；
-- 实例连续失败阈值；
-- 实例和域名冷却时间；
-- 邮箱记录保留天数；
-- 请求日志保留天数。
-
-敏感环境密钥不允许在普通设置页面查看或修改。
+敏感环境密钥不允许在普通设置页面查看或修改。未来需要在线修改部署参数时，应先增加独立持久化和审计能力，再开放相应表单。
 
 ## 13. 管理端鉴权和敏感配置
 
@@ -768,7 +770,7 @@ xiaoasi_gateway
 
 - 网关地址；
 - 可选指定域名或域名候选列表；
-- 可选前缀；
+- 可选用户名生成规则和姓名基础值；
 - 创建超时；
 - 验证码轮询参数。
 
@@ -898,7 +900,8 @@ Windows EXE 和其他项目只保存网关地址、域名选择参数、`mailbox
 - 指定域名列表路由；
 - 自动域名路由；
 - 禁用、异常和冷却过滤；
-- 地址前缀清洗和随机生成；
+- 用户名规则、姓名基础值清洗和随机生成；
+- 短数字用户名碰撞后自动重新生成；
 - 幂等创建；
 - 每实例 Token 缓存隔离；
 - 单实例并发刷新锁；

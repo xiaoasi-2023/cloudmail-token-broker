@@ -63,6 +63,14 @@ class DomainUpdateRequest(BaseModel):
     remark: str | None = Field(default=None, max_length=500)
 
 
+class ClientKeyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class ClientKeyUpdateRequest(BaseModel):
+    enabled: bool
+
+
 def create_admin_router(context: AdminApiContext) -> APIRouter:
     router = APIRouter(prefix="/admin-api", tags=["gateway-admin"])
     cookie_name = "xiaoasi_admin_session"
@@ -234,6 +242,42 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
             raise not_found("域名")
         context.repository.audit(username, "domain.clear_cooldown", "domain", str(domain_id))
         return {"ok": True, "data": item}
+
+    @router.get("/client-keys")
+    async def list_client_keys(_username: str = Depends(current_admin)):
+        return {"ok": True, "data": context.repository.list_client_keys()}
+
+    @router.post("/client-keys", status_code=201)
+    async def create_client_key(body: ClientKeyCreateRequest, username: str = Depends(current_admin)):
+        try:
+            item = context.repository.create_client_key(body.name)
+        except DatabaseIntegrityError as exc:
+            raise HTTPException(status_code=409, detail={"code": "CLIENT_KEY_CONFLICT", "message": "调用方名称已存在"}) from exc
+        context.repository.audit(username, "client_key.create", "client_key", str(item["id"]))
+        return {"ok": True, "data": item}
+
+    @router.patch("/client-keys/{key_id}")
+    async def update_client_key(key_id: int, body: ClientKeyUpdateRequest, username: str = Depends(current_admin)):
+        item = context.repository.update_client_key(key_id, enabled=body.enabled)
+        if item is None:
+            raise not_found("调用密钥")
+        context.repository.audit(username, "client_key.update", "client_key", str(key_id))
+        return {"ok": True, "data": item}
+
+    @router.post("/client-keys/{key_id}/regenerate")
+    async def regenerate_client_key(key_id: int, username: str = Depends(current_admin)):
+        item = context.repository.regenerate_client_key(key_id)
+        if item is None:
+            raise not_found("调用密钥")
+        context.repository.audit(username, "client_key.regenerate", "client_key", str(key_id))
+        return {"ok": True, "data": item}
+
+    @router.delete("/client-keys/{key_id}")
+    async def delete_client_key(key_id: int, username: str = Depends(current_admin)):
+        if not context.repository.delete_client_key(key_id):
+            raise not_found("调用密钥")
+        context.repository.audit(username, "client_key.delete", "client_key", str(key_id))
+        return {"ok": True}
 
     @router.get("/mailboxes")
     async def list_mailboxes(

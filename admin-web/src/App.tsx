@@ -8,6 +8,7 @@ import {
   EditOutlined,
   GlobalOutlined,
   InboxOutlined,
+  KeyOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -48,6 +49,7 @@ import dayjs from "dayjs";
 import { api, ApiError } from "./api";
 import type {
   CloudMailInstance,
+  ClientKey,
   DomainPayload,
   InstancePayload,
   MailboxRecord,
@@ -59,12 +61,13 @@ import type {
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
-type PageKey = "overview" | "instances" | "domains" | "mailboxes" | "logs" | "settings";
+type PageKey = "overview" | "instances" | "domains" | "clientKeys" | "mailboxes" | "logs" | "settings";
 
 const navItems = [
   { key: "overview", icon: <DashboardOutlined />, label: "运行概览" },
   { key: "instances", icon: <CloudServerOutlined />, label: "CloudMail 实例" },
   { key: "domains", icon: <GlobalOutlined />, label: "邮箱域名" },
+  { key: "clientKeys", icon: <KeyOutlined />, label: "调用密钥" },
   { key: "mailboxes", icon: <InboxOutlined />, label: "邮箱记录" },
   { key: "logs", icon: <DatabaseOutlined />, label: "请求日志" },
   { key: "settings", icon: <SettingOutlined />, label: "系统设置" },
@@ -74,6 +77,7 @@ const pageMeta: Record<PageKey, { title: string; description: string }> = {
   overview: { title: "运行概览", description: "实例、域名与邮箱链路的实时运行摘要" },
   instances: { title: "CloudMail 实例", description: "管理上游服务连接、凭据和可用状态" },
   domains: { title: "邮箱域名", description: "维护域名归属、选择权重与冷却状态" },
+  clientKeys: { title: "调用密钥", description: "为调用项目签发、停用和重新生成 API 密钥" },
   mailboxes: { title: "邮箱记录", description: "查看网关创建的邮箱及验证码处理状态" },
   logs: { title: "请求日志", description: "追踪业务请求、响应耗时与脱敏错误信息" },
   settings: { title: "系统设置", description: "查看部署模式、安全边界和运行参数入口" },
@@ -101,6 +105,25 @@ function statusTag(status?: string) {
   };
   const item = config[normalized] || { color: "default", text: status || "未知" };
   return <Tag color={item.color}>{item.text}</Tag>;
+}
+
+function domainStatusTag(domain: MailDomain) {
+  const normalized = (domain.status || "unknown").toLowerCase();
+  const hasRuntimeResult = domain.success_count > 0 || domain.failure_total > 0;
+  const config: Record<string, { color: string; text: string }> = {
+    healthy: { color: "success", text: "运行正常" },
+    unhealthy: { color: "error", text: "运行异常" },
+    disabled: { color: "default", text: "已停用" },
+    cooldown: { color: "warning", text: "冷却中" },
+    unknown: { color: hasRuntimeResult ? "warning" : "default", text: hasRuntimeResult ? "观察中" : "待首次调用" },
+  };
+  const item = config[normalized] || { color: "default", text: domain.status || "状态未知" };
+  const explanation = normalized === "unknown"
+    ? hasRuntimeResult
+      ? "该域名最近出现过失败，但尚未达到冷却阈值，后续调用结果会继续更新状态。"
+      : "该域名尚未经历真实的创建邮箱调用，首次调用后会根据结果自动更新状态。"
+    : "该状态由真实的创建邮箱调用结果自动更新。";
+  return <Tooltip title={explanation}><Tag color={item.color}>{item.text}</Tag></Tooltip>;
 }
 
 function getErrorMessage(error: unknown) {
@@ -399,13 +422,13 @@ function DomainsPage() {
     { title: "邮箱域名", key: "domain", render: (_, r) => <div className="primary-cell"><b>{r.domain}</b><span>{r.remark || "无备注"}</span></div> },
     { title: "所属实例", dataIndex: "instance_name", responsive: ["md"] },
     { title: "权重", dataIndex: "weight", width: 90 },
-    { title: "状态", key: "status", width: 120, render: (_, r) => <Space direction="vertical" size={2}>{statusTag(r.status)}<Badge status={r.enabled ? "success" : "default"} text={r.enabled ? "参与调度" : "已停用"} /></Space> },
+    { title: <Tooltip title="域名状态来自真实的创建邮箱调用，不会额外创建测试邮箱。">运行状态</Tooltip>, key: "status", width: 130, render: (_, r) => <Space direction="vertical" size={2}>{domainStatusTag(r)}<Badge status={r.enabled ? "success" : "default"} text={r.enabled ? "参与调度" : "已停用"} /></Space> },
     { title: "成功 / 失败", key: "stats", width: 130, responsive: ["lg"], render: (_, r) => <Text><span className="success-text">{r.success_count}</span> / <span className="error-text">{r.failure_total}</span></Text> },
     { title: "冷却截止", dataIndex: "cooldown_until", width: 170, responsive: ["xl"], render: formatTime },
     { title: "操作", key: "actions", width: 230, render: (_, r) => <Space wrap><Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>{r.cooldown_until && <Button size="small" onClick={() => void clearCooldown(r.id)}>解除冷却</Button>}<Popconfirm title="确认删除该域名？" onConfirm={() => void remove(r.id)}><Button size="small" danger icon={<DeleteOutlined />}>删除</Button></Popconfirm></Space> },
   ];
   return <>
-    <div className="toolbar"><Text type="secondary">共 {items.length} 个域名，自动模式按启用状态与权重选择</Text><Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button><Button type="primary" icon={<PlusOutlined />} disabled={!instances.length} onClick={openCreate}>新增域名</Button></Space></div>
+    <div className="toolbar"><div className="toolbar-copy"><Text type="secondary">共 {items.length} 个域名，自动模式按启用状态与权重选择</Text><Text type="secondary">“待首次调用”表示尚未通过该域名创建邮箱，首次真实调用后会自动更新运行状态。</Text></div><Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button><Button type="primary" icon={<PlusOutlined />} disabled={!instances.length} onClick={openCreate}>新增域名</Button></Space></div>
     {domainError && <Alert className="page-alert" type="error" showIcon message="邮箱域名加载失败" description={domainError} action={<Button size="small" onClick={() => void load()}>重新加载</Button>} />}
     {instanceError && <Alert className="page-alert" type="error" showIcon message="CloudMail 实例加载失败" description={`${instanceError}，暂时不能新增或调整域名归属。`} action={<Button size="small" onClick={() => void load()}>重新加载</Button>} />}
     {!instances.length && !loading && !instanceError && <Alert className="page-alert" type="warning" showIcon message="请先创建 CloudMail 实例，再添加邮箱域名。" />}
@@ -422,13 +445,40 @@ function DomainsPage() {
   </>;
 }
 
+function ClientKeysPage() {
+  const { message } = AntApp.useApp();
+  const [items, setItems] = useState<ClientKey[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [name, setName] = useState("");
+  const load = useCallback(async () => { setLoading(true); try { setItems(await api.clientKeys()); } catch (e) { message.error(getErrorMessage(e)); } finally { setLoading(false); } }, [message]);
+  useEffect(() => { void load(); }, [load]);
+  const create = async () => { if (!name.trim()) return; setCreating(true); try { await api.createClientKey(name.trim()); message.success("调用密钥已创建"); setModalOpen(false); setName(""); await load(); } catch (e) { message.error(getErrorMessage(e)); } finally { setCreating(false); } };
+  const toggle = async (item: ClientKey, enabled: boolean) => { try { await api.updateClientKey(item.id, enabled); message.success(enabled ? "调用密钥已启用" : "调用密钥已停用"); await load(); } catch (e) { message.error(getErrorMessage(e)); } };
+  const regenerate = async (id: number) => { try { await api.regenerateClientKey(id); message.success("调用密钥已重新生成，旧密钥立即失效"); await load(); } catch (e) { message.error(getErrorMessage(e)); } };
+  const remove = async (id: number) => { try { await api.deleteClientKey(id); message.success("调用密钥已删除"); await load(); } catch (e) { message.error(getErrorMessage(e)); } };
+  const columns: ColumnsType<ClientKey> = [
+    { title: "调用方", dataIndex: "name", render: (value) => <Text strong>{value}</Text> },
+    { title: "API Key（明文）", dataIndex: "api_key", render: (value) => <Text code copyable>{value}</Text> },
+    { title: "状态", dataIndex: "enabled", width: 100, render: (enabled, item) => <Switch checked={enabled} onChange={(value) => void toggle(item, value)} checkedChildren="启用" unCheckedChildren="停用" /> },
+    { title: "最近调用", dataIndex: "last_used_at", width: 170, render: formatTime },
+    { title: "操作", key: "actions", width: 190, render: (_, item) => <Space><Popconfirm title="重新生成后旧密钥会立即失效，确认继续？" onConfirm={() => void regenerate(item.id)}><Button size="small">重新生成</Button></Popconfirm><Popconfirm title="确认删除该调用密钥？" onConfirm={() => void remove(item.id)}><Button size="small" danger>删除</Button></Popconfirm></Space> },
+  ];
+  return <>
+    <div className="toolbar"><div className="toolbar-copy"><Text type="secondary">调用方必须使用 X-API-Key 请求业务接口</Text><Text type="secondary">密钥按当前要求明文保存，可在此页面直接复制。</Text></div><Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>新增密钥</Button></div>
+    <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无调用密钥，业务接口暂时无法使用" /> }} scroll={{ x: 900 }} />
+    <Modal title="新增调用密钥" open={modalOpen} confirmLoading={creating} okText="创建" cancelText="取消" onOk={() => void create()} onCancel={() => setModalOpen(false)}><Form layout="vertical"><Form.Item label="调用方名称" required><Input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder="例如：image2api、kirox" /></Form.Item></Form></Modal>
+  </>;
+}
+
 function MailboxesPage() {
   const [items, setItems] = useState<MailboxRecord[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
   const load = useCallback(async () => { setLoading(true); setError(""); try { setItems(await api.mailboxes()); } catch (e) { setError(getErrorMessage(e)); } finally { setLoading(false); } }, []);
   useEffect(() => { void load(); }, [load]);
   const columns: ColumnsType<MailboxRecord> = [
     { title: "邮箱地址", dataIndex: "address", render: (v) => <Text copyable>{v}</Text> },
-    { title: "用途 / 来源", key: "source", responsive: ["md"], render: (_, r) => <div className="primary-cell"><b>{r.purpose || "未标记"}</b><span>{r.source || "未知来源"}</span></div> },
+    { title: "用途 / 调用方", key: "source", responsive: ["md"], render: (_, r) => <div className="primary-cell"><b>{r.purpose || "未标记"}</b><span>{r.source || "未知调用方"}</span></div> },
     { title: "域名", dataIndex: "domain", responsive: ["lg"] },
     { title: "所属实例", dataIndex: "instance_name", responsive: ["lg"] },
     { title: "邮箱状态", dataIndex: "status", width: 100, render: statusTag },
@@ -445,7 +495,7 @@ function LogsPage() {
   const columns: ColumnsType<RequestLog> = [
     { title: "时间", dataIndex: "created_at", width: 170, render: formatTime },
     { title: "请求", key: "request", render: (_, r) => <div className="primary-cell"><b>{r.method || "—"} {r.path || "—"}</b><span>{r.request_id || "无请求 ID"}</span></div> },
-    { title: "来源", dataIndex: "source", responsive: ["md"], render: (v) => v || "—" },
+    { title: "调用方", dataIndex: "source", responsive: ["md"], render: (v) => v || "—" },
     { title: "状态", dataIndex: "status_code", width: 90, render: (v: number) => <Tag color={v >= 500 ? "error" : v >= 400 ? "warning" : "success"}>{v}</Tag> },
     { title: "耗时", dataIndex: "duration_ms", width: 100, render: (v) => v == null ? "—" : `${v} ms` },
     { title: "错误码", dataIndex: "error_code", responsive: ["lg"], render: (v) => v || "—" },
@@ -468,19 +518,19 @@ function Console({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const meta = pageMeta[page];
-  const content = useMemo(() => ({ overview: <OverviewPage />, instances: <InstancesPage />, domains: <DomainsPage />, mailboxes: <MailboxesPage />, logs: <LogsPage />, settings: <SettingsPage /> })[page], [page]);
+  const content = useMemo(() => ({ overview: <OverviewPage />, instances: <InstancesPage />, domains: <DomainsPage />, clientKeys: <ClientKeysPage />, mailboxes: <MailboxesPage />, logs: <LogsPage />, settings: <SettingsPage /> })[page], [page]);
   useEffect(() => {
     window.addEventListener("admin-unauthorized", onUnauthorized);
     return () => window.removeEventListener("admin-unauthorized", onUnauthorized);
   }, [onUnauthorized]);
   const logout = async () => { setLoggingOut(true); try { await api.logout(); onUnauthorized(); } catch (e) { message.error(getErrorMessage(e)); } finally { setLoggingOut(false); } };
   const navigate = (key: string) => { setPage(key as PageKey); setMobileOpen(false); };
-  const sidebar = <><div className="console-brand"><div className="brand-mark"><ApiOutlined /></div>{!collapsed && <div><b>Xiaoasi Mail</b><span>Gateway Control</span></div>}</div><Menu theme="dark" mode="inline" selectedKeys={[page]} items={navItems} onClick={({ key }) => navigate(key)} /><div className="sider-footer">{!collapsed && <span>CONTROL PLANE<br />VERSION 0.2</span>}<Tooltip title="退出登录"><Button type="text" icon={<LogoutOutlined />} loading={loggingOut} onClick={() => void logout()} /></Tooltip></div></>;
+  const sidebar = <><div className="console-brand"><div className="brand-mark"><ApiOutlined /></div>{!collapsed && <div><b>Xiaoasi Mail</b><span>Gateway Control</span></div>}</div><Menu theme="dark" mode="inline" selectedKeys={[page]} items={navItems} onClick={({ key }) => navigate(key)} /><div className="sider-footer">{!collapsed && <span>CONTROL PLANE<br />VERSION 0.3</span>}<Tooltip title="退出登录"><Button type="text" icon={<LogoutOutlined />} loading={loggingOut} onClick={() => void logout()} /></Tooltip></div></>;
   return <Layout className="console-layout">
     <Sider className="desktop-sider" width={244} collapsedWidth={78} collapsed={collapsed} trigger={null}>{sidebar}</Sider>
     <Drawer className="mobile-drawer" width={260} placement="left" open={mobileOpen} onClose={() => setMobileOpen(false)} closable={false}>{sidebar}</Drawer>
     <Layout>
-      <Header className="console-header"><Button className="desktop-collapse" type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Button className="mobile-menu" type="text" icon={<MenuUnfoldOutlined />} onClick={() => setMobileOpen(true)} /><div className="header-title"><Text className="section-index">MAIL OPERATIONS</Text><Title level={3}>{meta.title}</Title></div><Badge status="success" text="管理会话已连接" /></Header>
+      <Header className="console-header"><Button className="desktop-collapse" type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Button className="mobile-menu" type="text" icon={<MenuUnfoldOutlined />} onClick={() => setMobileOpen(true)} /><Text className="section-index header-console-name">MAIL OPERATIONS</Text><Badge status="success" text="管理会话已连接" /></Header>
       <Content className="console-content"><div className="page-heading"><div><Title level={2}>{meta.title}</Title><Text>{meta.description}</Text></div><span className="page-code">XM / {String(navItems.findIndex((i) => i.key === page) + 1).padStart(2, "0")}</span></div><div className="page-body">{content}</div></Content>
     </Layout>
   </Layout>;

@@ -72,7 +72,7 @@ class CloudMailInstanceClient:
             self._token_expires_at = self.now() + timedelta(seconds=self.token_cache_seconds)
             return token
 
-    async def create_mailbox(self, address: str, password: str) -> None:
+    async def create_mailbox(self, address: str, password: str) -> bool:
         payload = await self._authenticated_post(
             "/api/public/addUser",
             {"list": [{"email": address, "password": password}]},
@@ -80,10 +80,11 @@ class CloudMailInstanceClient:
         )
         code = _response_code(payload)
         if code == 200:
-            return
+            return True
         message = _response_message(payload).lower()
         if any(marker in message for marker in ("exist", "already", "已存在", "重复")):
-            return
+            # 短用户名存在碰撞概率，交由网关重新生成，不能把已有邮箱当成创建成功。
+            return False
         raise ProviderRequestError("创建邮箱", retryable=code >= 500)
 
     async def list_messages(self, address: str, *, size: int = 20) -> list[MailMessage]:

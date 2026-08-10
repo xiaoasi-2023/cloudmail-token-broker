@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -176,10 +177,11 @@ class FakeProviderClient:
         self.created: list[str] = []
         self.messages: list[MailMessage] = []
 
-    async def create_mailbox(self, address: str, password: str) -> None:
+    async def create_mailbox(self, address: str, password: str) -> bool:
         assert password
         await asyncio.sleep(0)
         self.created.append(address)
+        return True
 
     async def list_messages(self, address: str) -> list[MailMessage]:
         return self.messages
@@ -205,11 +207,11 @@ def test_mailbox_service_create_is_idempotent_and_extracts_new_code() -> None:
     )
 
     async def scenario() -> None:
-        request = CreateMailboxRequest(purpose="openai", domain="one.test", prefix="Image 2 API")
+        request = CreateMailboxRequest(purpose="openai", domain="one.test", name="Image 2 API")
         first = await service.create_mailbox(request, "task-1")
         second = await service.create_mailbox(request, "task-1")
         assert first.mailbox_id == second.mailbox_id
-        assert first.address.startswith("image2api-")
+        assert re.fullmatch(r"image2api\d{4}@one\.test", first.address)
         assert first.address.endswith("@one.test")
         assert len(client.created) == 1
 
@@ -219,10 +221,11 @@ def test_mailbox_service_create_is_idempotent_and_extracts_new_code() -> None:
                 subject="Old security code: 111111",
                 received_at=mailbox.created_at - timedelta(minutes=1),
             ),
-            MailMessage(
-                subject="Your security code is 482913",
-                received_at=mailbox.created_at + timedelta(seconds=1),
-            ),
+                MailMessage(
+                    subject="Your temporary ChatGPT verification code",
+                    text="Enter this temporary verification code to continue: 482913",
+                    received_at=mailbox.created_at + timedelta(seconds=1),
+                ),
         ]
         result = await service.get_verification_code(
             first.mailbox_id,
@@ -277,3 +280,77 @@ def test_concurrent_same_idempotency_key_creates_only_one_mailbox() -> None:
     asyncio.run(scenario())
     assert len(client.created) == 1
     assert service._idempotency_locks == {}
+
+
+def test_default_address_pattern_uses_random_name_and_four_digits() -> None:
+    store = MemoryStore()
+    store.instances = {1: instance(1)}
+    store.domains = [MailDomainConfig(id=10, instance_id=1, domain="one.test")]
+    client = FakeProviderClient()
+    service = MailboxGatewayService(
+        store,
+        FakeProviderRegistry(client),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+    )
+
+    data = asyncio.run(service.create_mailbox(CreateMailboxRequest(domain="one.test"), None))
+
+    assert re.fullmatch(r"[a-z]+\d{4}@one\.test", data.address)
+
+
+def test_address_collision_regenerates_before_saving_mailbox() -> None:
+    class CollisionProvider(FakeProviderClient):
+        async def create_mailbox(self, address: str, password: str) -> bool:
+            self.created.append(address)
+            return len(self.created) > 1
+
+    store = MemoryStore()
+    store.instances = {1: instance(1)}
+    store.domains = [MailDomainConfig(id=10, instance_id=1, domain="one.test")]
+    client = CollisionProvider()
+    service = MailboxGatewayService(
+        store,
+        FakeProviderRegistry(client),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+    )
+
+    data = asyncio.run(
+        service.create_mailbox(
+            CreateMailboxRequest(domain="one.test", name="alice"),
+            None,
+        )
+    )
+
+    assert len(client.created) == 2
+    assert data.address == client.created[1]
+    assert data.address != client.created[0]
+
+
+def test_address_collision_exhaustion_returns_create_failure() -> None:
+    class AlwaysCollisionProvider(FakeProviderClient):
+        async def create_mailbox(self, address: str, password: str) -> bool:
+            self.created.append(address)
+            return False
+
+    store = MemoryStore()
+    store.instances = {1: instance(1)}
+    store.domains = [MailDomainConfig(id=10, instance_id=1, domain="one.test")]
+    client = AlwaysCollisionProvider()
+    service = MailboxGatewayService(
+        store,
+        FakeProviderRegistry(client),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+        max_address_attempts=3,
+    )
+
+    with pytest.raises(GatewayBusinessError) as error:
+        asyncio.run(
+            service.create_mailbox(
+                CreateMailboxRequest(domain="one.test", name="alice"),
+                None,
+            )
+        )
+
+    assert error.value.code == "MAILBOX_CREATE_FAILED"
+    assert len(client.created) == 3
+    assert store.mailboxes == {}

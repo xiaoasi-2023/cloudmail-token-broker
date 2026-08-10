@@ -7,16 +7,25 @@ from datetime import timedelta
 from app.gateway.business_models import MailMessage
 
 
+_STYLE_SCRIPT = re.compile(r"(?is)<(?:style|script)[^>]*>.*?</(?:style|script)>")
 _HTML_TAG = re.compile(r"<[^>]+>")
-_NUMERIC_PATTERNS = (
+_RULES: dict[str, tuple[re.Pattern[str], ...]] = {
+    "openai": (
+        re.compile(r"(?is)(?:输入此临时验证码以继续|Enter this temporary verification code to continue)[^0-9]{0,80}([0-9]{6})"),
+    ),
+    "kiro": (
+        re.compile(r"(?is)(?:验证码|認証コード|verification\s+code)[^0-9]{0,120}([0-9]{6})"),
+    ),
+    "cursor": (
+        re.compile(r"(?is)(?:一次性验证码(?:是|为)?|one[- ]time verification code)[^0-9]{0,40}([0-9]{6})"),
+    ),
+    "grok": (
+        re.compile(r"(?i)\b([A-Z0-9]{3}-[A-Z0-9]{3})\b"),
+    ),
+}
+_GENERIC_RULES = (
     re.compile(r"(?i)(?:security|verification|one[- ]time)\s*(?:code)?\D{0,24}(\d{4,8})"),
-    re.compile(r"(?:验证码|安全代码|一次性代码)[：:\s]*(\d{4,8})"),
-    re.compile(r"(?:^|\D)(\d{6})(?:\D|$)"),
-)
-_ALPHANUMERIC_PATTERNS = (
-    re.compile(r"(?i)(?:verification|security|one[- ]time)\s*(?:code)?\D{0,24}([A-Z0-9]{3,8}(?:-[A-Z0-9]{2,8})?)"),
-    re.compile(r"(?:验证码|安全代码)[：:\s]*([A-Z0-9]{3,8}(?:-[A-Z0-9]{2,8})?)", re.I),
-    re.compile(r"(?i)(?:^|\s)([A-Z0-9]{3,4}-[A-Z0-9]{3,4})(?:\s|$)"),
+    re.compile(r"(?:验证码|安全代码|一次性代码|認証コード)[：:\s]*(\d{4,8})", re.I),
 )
 
 
@@ -26,17 +35,18 @@ def extract_verification_code(
     purpose: str,
     mailbox_created_at,
 ) -> str:
-    lower_bound = mailbox_created_at - timedelta(seconds=5)
+    # 仅允许 15 秒的服务端/邮件提供方时钟偏差，避免后续任务误吃历史验证码。
+    lower_bound = mailbox_created_at - timedelta(seconds=15)
+    normalized_purpose = purpose.strip().lower()
+    patterns = _RULES.get(normalized_purpose, _GENERIC_RULES)
     for message in messages:
-        if message.received_at is not None and message.received_at < lower_bound:
+        # 没有可靠收件时间时无法证明邮件属于当前邮箱会话，宁可继续等待。
+        if message.received_at is None or message.received_at < lower_bound:
             continue
         direct = message.code.strip().upper()
-        if direct and _valid_code(direct, purpose):
+        if direct and _valid_code(direct, normalized_purpose):
             return direct
-        content = "\n".join(
-            (message.subject, message.text, _HTML_TAG.sub(" ", html.unescape(message.html)))
-        )
-        patterns = _ALPHANUMERIC_PATTERNS if purpose.strip().lower() == "grok" else _NUMERIC_PATTERNS
+        content = _message_content(message)
         for pattern in patterns:
             match = pattern.search(content)
             if match:
@@ -44,7 +54,15 @@ def extract_verification_code(
     return ""
 
 
+def _message_content(message: MailMessage) -> str:
+    clean_html = html.unescape(_STYLE_SCRIPT.sub(" ", message.html))
+    clean_html = _HTML_TAG.sub(" ", clean_html)
+    return "\n".join((message.subject, message.text, clean_html))
+
+
 def _valid_code(code: str, purpose: str) -> bool:
-    if purpose.strip().lower() == "grok":
-        return bool(re.fullmatch(r"[A-Z0-9]{3,8}(?:-[A-Z0-9]{2,8})?", code, re.I))
+    if purpose == "grok":
+        return bool(re.fullmatch(r"[A-Z0-9]{3}-[A-Z0-9]{3}", code, re.I))
+    if purpose in {"openai", "kiro", "cursor"}:
+        return bool(re.fullmatch(r"\d{6}", code))
     return bool(re.fullmatch(r"\d{4,8}", code))

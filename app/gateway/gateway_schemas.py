@@ -1,6 +1,17 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+AddressPattern = Literal[
+    "name_digits_4",
+    "name_digits_6",
+    "name_random_6",
+    "random_12",
+    "legacy_prefix_random",
+]
 
 
 class GatewaySchema(BaseModel):
@@ -11,8 +22,9 @@ class CreateMailboxRequest(GatewaySchema):
     purpose: str = Field(default="openai", min_length=1, max_length=32)
     domain: str | None = Field(default=None, max_length=253)
     domains: list[str] | None = Field(default=None, max_length=100)
-    prefix: str = Field(default="mail", max_length=32)
-    source: str = Field(default="", max_length=64)
+    address_pattern: AddressPattern = Field(default="name_digits_4", alias="addressPattern")
+    name: str = Field(default="", max_length=32)
+    prefix: str = Field(default="", max_length=32)
 
     @model_validator(mode="after")
     def validate_selector(self) -> "CreateMailboxRequest":

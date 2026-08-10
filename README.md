@@ -80,13 +80,13 @@ docker compose logs --tail=100 cloudmail-token-broker
 通过宝塔网站反向代理：
 
 ```text
-https://你的网关域名  →  http://127.0.0.1:8788
+https://cloudmail.xiaoasi.xyz  →  http://127.0.0.1:8788
 ```
 
 管理端：
 
 ```text
-https://你的网关域名/admin/
+https://cloudmail.xiaoasi.xyz/admin/
 ```
 
 详细步骤见 [docs/deployment.md](docs/deployment.md)。
@@ -96,11 +96,11 @@ https://你的网关域名/admin/
 自动选择域名：
 
 ```bash
-curl -X POST 'https://mail-api.example.com/v1/mailboxes' \
+curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: register-task-123' \
-  -H 'X-Client-Source: image2api' \
-  -d '{"purpose":"openai","prefix":"image2api","source":"image2api"}'
+  -H 'X-API-Key: <管理端创建的调用密钥>' \
+  -d '{"purpose":"openai","addressPattern":"name_digits_4","name":"image2api"}'
 ```
 
 指定单域名：
@@ -109,7 +109,8 @@ curl -X POST 'https://mail-api.example.com/v1/mailboxes' \
 {
   "purpose": "openai",
   "domain": "mail-a.example.com",
-  "prefix": "kirox"
+  "addressPattern": "name_digits_4",
+  "name": "kirox"
 }
 ```
 
@@ -119,7 +120,8 @@ curl -X POST 'https://mail-api.example.com/v1/mailboxes' \
 {
   "purpose": "openai",
   "domains": ["mail-a.example.com", "mail-b.example.com"],
-  "prefix": "image2api"
+  "addressPattern": "name_random_6",
+  "name": "image2api"
 }
 ```
 
@@ -130,7 +132,7 @@ curl -X POST 'https://mail-api.example.com/v1/mailboxes' \
   "code": 200,
   "data": {
     "mailboxId": "mbx_example",
-    "address": "image2apiabc123@mail-a.example.com",
+    "address": "image2api4821@mail-a.example.com",
     "domain": "mail-a.example.com",
     "mailboxToken": "短期邮箱访问凭证",
     "createdAt": "2026-08-10T08:00:00+00:00",
@@ -142,7 +144,8 @@ curl -X POST 'https://mail-api.example.com/v1/mailboxes' \
 ## 查询验证码
 
 ```bash
-curl -X POST 'https://mail-api.example.com/v1/mailboxes/mbx_example/verification-code' \
+curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes/mbx_example/verification-code' \
+  -H 'X-API-Key: <管理端创建的调用密钥>' \
   -H 'Authorization: Mailbox <mailboxToken>' \
   -H 'Content-Type: application/json' \
   -d '{"purpose":"openai","waitSeconds":20}'
@@ -150,7 +153,7 @@ curl -X POST 'https://mail-api.example.com/v1/mailboxes/mbx_example/verification
 
 `mailboxToken` 只允许访问创建时对应的邮箱，不是图片站或 Kirox 的长期项目密钥。
 
-完整接口见 [docs/api.md](docs/api.md)。
+完整接口见 [调用方接入指南](docs/client-integration.md) 和 [API 接口文档](docs/api.md)。
 
 ## 管理端
 
@@ -218,6 +221,7 @@ npm run build
 
 ## 文档
 
+- [调用方接入指南](docs/client-integration.md)
 - [API 接口文档](docs/api.md)
 - [宝塔部署手册](docs/deployment.md)
 - [完整开发方案](docs/xiaoasi-mail-gateway-development-plan.md)
