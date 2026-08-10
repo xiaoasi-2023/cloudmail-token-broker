@@ -22,6 +22,7 @@ def test_project_specific_verification_rules() -> None:
 
 def test_project_rules_reject_unrelated_years_and_wrong_formats() -> None:
     assert extract("openai", "New sign-in", "Time: June 22, 2026 at 7:27 AM") == ""
+    assert extract("openai", "Unrelated notification", "Reference number 204030") == ""
     assert extract("grok", "Claude security notice", "Copyright 2026, code 123456") == ""
     assert extract("cursor", "Cursor", "Reference number 202608") == ""
 
@@ -41,3 +42,39 @@ def test_html_style_noise_does_not_become_code() -> None:
         received_at=created,
     )
     assert extract_verification_code([message], purpose="kiro", mailbox_created_at=created) == "483920"
+
+
+def test_openai_html_layout_whitespace_does_not_break_context_distance() -> None:
+    created = datetime.now(UTC)
+    layout_noise = "".join("<div>\n    </div>" for _ in range(30))
+    message = MailMessage(
+        subject="Your temporary OpenAI verification code",
+        html=(
+            "<p>Enter this temporary verification code to continue:</p>"
+            f"{layout_noise}<table><tr><td>204030</td></tr></table>"
+        ),
+        received_at=created,
+    )
+    assert extract_verification_code([message], purpose="openai", mailbox_created_at=created) == "204030"
+
+
+def test_project_identity_allows_emailtool_style_loose_code_fallback() -> None:
+    assert extract(
+        "openai",
+        "Your temporary OpenAI verification code",
+        "Use the number shown below to continue. 204030",
+    ) == "204030"
+
+
+def test_provided_code_cannot_bypass_project_identity() -> None:
+    created = datetime.now(UTC)
+    unrelated = MailMessage(
+        subject="Unrelated notification",
+        code="204030",
+        received_at=created,
+    )
+    assert extract_verification_code(
+        [unrelated],
+        purpose="openai",
+        mailbox_created_at=created,
+    ) == ""

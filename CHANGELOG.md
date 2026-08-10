@@ -11,6 +11,8 @@
 - 新增调用密钥管理页面、启停、重新生成和删除能力，并限制邮箱只能由所属调用密钥访问。
 - 参考 EmailTool 合并 OpenAI、Kiro、Cursor、Grok 项目专属验证码规则，收紧历史邮件时间窗口并过滤 HTML/CSS 噪声。
 - 修复 CloudMail 邮件已经到达但验证码查询超时：兼容 `created_at`、`date`、`time`、`text_body`、`html_body`、`verification_code` 等部署字段，并允许新建唯一邮箱识别无时间邮件。
+- 修复 OpenAI HTML 邮件多层表格排版产生大量空白，导致验证码超出规则上下文距离而无法识别的问题。
+- 对齐 EmailTool 的完整提码链路：先校验项目邮件身份，再执行项目专属正则，失败后按项目验证码格式进行通用兜底；上游候选码也不得绕过邮件身份校验。
 
 - 将服务升级为 Xiaoasi Mail Gateway 0.3.0，支持多个 CloudMail 实例及每实例多个邮箱域名，并彻底移除旧 Token Broker 对外能力。
 - 新增统一邮箱 API，支持指定域名、域名范围和自动加权路由，调用方不再接触 CloudMail Token。
