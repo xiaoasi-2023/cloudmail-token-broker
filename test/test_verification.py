@@ -26,11 +26,11 @@ def test_project_rules_reject_unrelated_years_and_wrong_formats() -> None:
     assert extract("cursor", "Cursor", "Reference number 202608") == ""
 
 
-def test_old_or_untimed_messages_are_ignored() -> None:
+def test_old_messages_are_ignored_but_untimed_new_mailbox_messages_are_supported() -> None:
     created = datetime.now(UTC)
     old = MailMessage(text="输入此临时验证码以继续：111111", received_at=created - timedelta(minutes=1))
     untimed = MailMessage(text="输入此临时验证码以继续：222222")
-    assert extract_verification_code([old, untimed], purpose="openai", mailbox_created_at=created) == ""
+    assert extract_verification_code([old, untimed], purpose="openai", mailbox_created_at=created) == "222222"
 
 
 def test_html_style_noise_does_not_become_code() -> None:

@@ -152,7 +152,7 @@ Content-Type: application/json
 - 建议由服务端单次等待 15～20 秒，调用方不要高频并发轮询同一邮箱；
 - 网关按 `openai`、`kiro`、`cursor`、`grok` 使用独立的强匹配规则并直接返回验证码；
 - OpenAI、Kiro、Cursor 返回 6 位数字，Grok 保留 `NVK-5XZ` 形式的连字符；
-- 网关会过滤历史邮件、无可靠收件时间的邮件和 HTML/CSS 噪声，避免误提取年份或颜色值。
+- 网关会在邮件带有可靠时间时过滤历史邮件，并兼容部分 CloudMail 版本缺少时间字段的情况；HTML/CSS 噪声会被清理，避免误提取年份或颜色值。
 
 收到验证码：
 

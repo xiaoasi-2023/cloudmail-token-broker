@@ -16,7 +16,7 @@ from app.gateway.business_models import (
     MailMessage,
     MailboxRecord,
 )
-from app.gateway.cloudmail_provider import CloudMailInstanceClient
+from app.gateway.cloudmail_provider import CloudMailInstanceClient, _parse_message
 from app.gateway.domain_router import DomainRouter
 from app.gateway.gateway_schemas import CreateMailboxRequest, VerificationCodeRequest
 from app.gateway.mailbox_service import MailboxGatewayService
@@ -170,6 +170,23 @@ def test_cloudmail_concurrent_auth_failures_share_one_refreshed_token() -> None:
     assert token_calls == 2
     assert list_authorizations.count("token-1") == 2
     assert list_authorizations.count("token-2") == 2
+
+
+def test_cloudmail_message_parser_supports_deployment_field_aliases() -> None:
+    message = _parse_message(
+        {
+            "subject": "Your temporary OpenAI verification code",
+            "text_body": "Enter this temporary verification code to continue: 204030",
+            "html_body": "<p>204030</p>",
+            "verification_code": "204030",
+            "created_at": "2026-08-10T17:59:30Z",
+        }
+    )
+
+    assert message.text.endswith("204030")
+    assert message.html == "<p>204030</p>"
+    assert message.code == "204030"
+    assert message.received_at == datetime(2026, 8, 10, 17, 59, 30, tzinfo=UTC)
 
 
 class FakeProviderClient:

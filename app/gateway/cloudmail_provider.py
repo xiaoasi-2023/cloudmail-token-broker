@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable
 
 import httpx
@@ -201,9 +202,28 @@ def _response_message(payload: dict[str, Any]) -> str:
 def _parse_message(item: dict[str, Any]) -> MailMessage:
     return MailMessage(
         subject=_string(item, "subject", "title"),
-        text=_string(item, "text", "plainText", "body"),
-        html=_string(item, "content", "html", "htmlContent"),
-        code=_string(item, "code", "verificationCode"),
+        text=_string(
+            item,
+            "text",
+            "textBody",
+            "text_body",
+            "plain",
+            "plainText",
+            "bodyText",
+            "body_text",
+            "body",
+        ),
+        html=_string(
+            item,
+            "content",
+            "html",
+            "htmlContent",
+            "htmlBody",
+            "html_body",
+            "bodyHtml",
+            "body_html",
+        ),
+        code=_string(item, "code", "verificationCode", "verification_code"),
         received_at=_message_time(item),
         raw=item,
     )
@@ -218,7 +238,20 @@ def _string(item: dict[str, Any], *keys: str) -> str:
 
 
 def _message_time(item: dict[str, Any]) -> datetime | None:
-    for key in ("createdAt", "createTime", "receivedAt", "receiveTime", "timestamp"):
+    for key in (
+        "time",
+        "date",
+        "created",
+        "createdAt",
+        "created_at",
+        "createTime",
+        "create_time",
+        "receivedAt",
+        "received_at",
+        "receiveTime",
+        "receive_time",
+        "timestamp",
+    ):
         value = item.get(key)
         if isinstance(value, (int, float)):
             stamp = float(value)
@@ -226,13 +259,25 @@ def _message_time(item: dict[str, Any]) -> datetime | None:
                 stamp /= 1000
             return datetime.fromtimestamp(stamp, UTC)
         if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                continue
             try:
-                if value.isdigit():
-                    stamp = int(value)
+                if text.isdigit():
+                    stamp = int(text)
                     if stamp > 1_000_000_000_000:
                         stamp //= 1000
                     return datetime.fromtimestamp(stamp, UTC)
-                return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=UTC)
+                return parsed.astimezone(UTC)
             except (ValueError, OverflowError):
-                continue
+                try:
+                    parsed = parsedate_to_datetime(text)
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=UTC)
+                    return parsed.astimezone(UTC)
+                except (TypeError, ValueError, OverflowError):
+                    continue
     return None

@@ -40,8 +40,9 @@ def extract_verification_code(
     normalized_purpose = purpose.strip().lower()
     patterns = _RULES.get(normalized_purpose, _GENERIC_RULES)
     for message in messages:
-        # 没有可靠收件时间时无法证明邮件属于当前邮箱会话，宁可继续等待。
-        if message.received_at is None or message.received_at < lower_bound:
+        # CloudMail 部署版本的时间字段并不统一；有可靠时间时过滤旧信，
+        # 无时间时仍允许识别，因为网关每次创建的是全新且唯一的邮箱地址。
+        if message.received_at is not None and message.received_at < lower_bound:
             continue
         direct = message.code.strip().upper()
         if direct and _valid_code(direct, normalized_purpose):
