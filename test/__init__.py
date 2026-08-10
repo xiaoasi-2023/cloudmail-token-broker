@@ -1,1 +1,1 @@
-"""CloudMail Token Broker 测试包。"""
+"""Xiaoasi Mail Gateway 测试包。"""

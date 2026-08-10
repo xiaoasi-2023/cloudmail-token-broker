@@ -16,7 +16,6 @@ Xiaoasi Mail Gateway 是一个支持多 CloudMail 实例、多邮箱域名和可
 - SQLite 持久化实例、域名、邮箱、请求日志和管理会话；
 - CloudMail 管理员密码加密保存；
 - React + Ant Design 管理端；
-- 保留旧 Token Broker 接口供迁移阶段使用；
 - 提供 dry-run/apply 数据保留清理脚本。
 
 ## 调用链
@@ -222,13 +221,3 @@ npm run build
 - [宝塔部署手册](docs/deployment.md)
 - [完整开发方案](docs/xiaoasi-mail-gateway-development-plan.md)
 - [发布流程](docs/release.md)
-
-## 兼容说明
-
-以下旧接口暂时保留：
-
-- `POST /v1/token`
-- `POST /v1/token/refresh`
-- `POST /api/public/genToken`
-
-它们只用于现有项目迁移。图片站、Kirox 和其他调用方全部切换到邮箱网关接口后，应关闭 Token 外发。

@@ -236,13 +236,3 @@ Content-Type: application/json
 成功后服务端写入 HttpOnly Cookie，前端请求必须使用 `credentials: include`。
 
 管理端 CRUD 请求和响应字段与页面表单一致。实例响应永远不包含管理员密码和 CloudMail Token。
-
-## 10. 兼容接口
-
-迁移阶段保留：
-
-- `POST /v1/token`
-- `POST /v1/token/refresh`
-- `POST /api/public/genToken`
-
-只有配置旧的 `CLOUDMAIL_BASE_URL`、`CLOUDMAIL_ADMIN_EMAIL` 和 `CLOUDMAIL_ADMIN_PASSWORD` 后才可使用；没有配置时返回 `LEGACY_BROKER_DISABLED`。

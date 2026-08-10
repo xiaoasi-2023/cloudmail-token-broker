@@ -11,7 +11,6 @@ from app.main import create_app
 
 def gateway_settings(tmp_path: Path) -> Settings:
     return Settings(
-        broker_public_access=True,
         gateway_enabled=True,
         gateway_database_path=str(tmp_path / "gateway.db"),
         data_encryption_key="data-encryption-key-for-tests-123456",
@@ -77,3 +76,14 @@ def test_admin_login_is_rate_limited_by_source(tmp_path: Path) -> None:
     assert first.status_code == 401
     assert second.status_code == 429
     assert second.json()["code"] == "RATE_LIMITED"
+
+
+def test_legacy_token_broker_routes_are_not_exposed(tmp_path: Path) -> None:
+    app = create_app(gateway_settings(tmp_path))
+
+    with TestClient(app) as client:
+        assert client.post("/v1/token").status_code == 404
+        assert client.post("/v1/token/refresh", json={}).status_code == 404
+        assert client.post("/api/public/genToken", json={}).status_code == 404
+        assert client.get("/admin/status").status_code == 404
+        assert client.post("/admin/token/refresh").status_code == 404

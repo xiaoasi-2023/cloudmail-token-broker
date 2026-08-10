@@ -7,14 +7,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, Header, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.auth import AuthRegistry, ClientIdentity
-from app.cloudmail_client import CloudMailClient
 from app.config import Settings
-from app.errors import BrokerError
 from app.gateway import (
     AdminApiContext,
     AdminSessionService,
@@ -32,37 +29,18 @@ from app.gateway.mailbox_token import MailboxTokenSigner
 from app.gateway.public_api import create_gateway_router
 from app.gateway.sqlite_business_store import SQLiteGatewayBusinessStore
 from app.rate_limit import InMemoryRateLimiter
-from app.schemas import RefreshRequest, TokenResponse
-from app.token_service import TokenService
 
 
 logger = logging.getLogger("xiaoasi_mail_gateway")
 
 
-def create_app(
-    settings: Settings | None = None,
-    *,
-    cloudmail_client: CloudMailClient | None = None,
-) -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or Settings.from_env()
     logging.basicConfig(
         level=getattr(logging, resolved_settings.log_level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    resolved_client = cloudmail_client
-    if resolved_client is None and resolved_settings.legacy_cloudmail_configured:
-        resolved_client = CloudMailClient(resolved_settings)
-    token_service = (
-        TokenService(
-            resolved_client,
-            cache_seconds=resolved_settings.token_cache_seconds,
-            refresh_skew_seconds=resolved_settings.token_refresh_skew_seconds,
-        )
-        if resolved_client is not None
-        else None
-    )
-    auth = AuthRegistry(resolved_settings.broker_client_keys, resolved_settings.broker_admin_key)
     rate_limiter = InMemoryRateLimiter()
 
     gateway_repository: GatewayRepository | None = None
@@ -127,29 +105,19 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         yield
-        if resolved_client is not None:
-            await resolved_client.close()
         if gateway_providers is not None:
             await gateway_providers.close()
 
     app = FastAPI(
         title="Xiaoasi Mail Gateway",
-        version="0.2.0",
+        version="0.3.0",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
         lifespan=lifespan,
     )
     app.state.settings = resolved_settings
-    app.state.token_service = token_service
     app.state.gateway_repository = gateway_repository
-
-    @app.exception_handler(BrokerError)
-    async def broker_error_handler(_request: Request, exc: BrokerError):
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"code": exc.code, "message": exc.message},
-        )
 
     @app.exception_handler(GatewayBusinessError)
     async def gateway_error_handler(_request: Request, exc: GatewayBusinessError):
@@ -174,7 +142,7 @@ def create_app(
                     f"gateway:admin-login:{client_key}",
                     resolved_settings.admin_login_rate_limit_per_minute,
                 )
-            except BrokerError as exc:
+            except GatewayBusinessError as exc:
                 return JSONResponse(
                     status_code=exc.status_code,
                     content={"code": exc.code, "message": exc.message},
@@ -193,7 +161,7 @@ def create_app(
                         f"gateway:mailbox:{client_key}",
                         resolved_settings.mailbox_poll_rate_limit_per_minute,
                     )
-            except BrokerError as exc:
+            except GatewayBusinessError as exc:
                 return JSONResponse(
                     status_code=exc.status_code,
                     content={"code": exc.code, "message": exc.message},
@@ -215,22 +183,6 @@ def create_app(
         response.headers["X-Request-ID"] = request_id
         return response
 
-    def require_client(authorization: str | None) -> ClientIdentity:
-        if resolved_settings.broker_public_access:
-            return ClientIdentity(client_id="public")
-        return auth.require_client(authorization)
-
-    def require_admin(authorization: str | None) -> None:
-        auth.require_admin(authorization)
-
-    def require_token_service() -> TokenService:
-        if token_service is None:
-            raise BrokerError("LEGACY_BROKER_DISABLED", "旧 Token Broker 未配置", 503)
-        return token_service
-
-    def token_payload(snapshot) -> dict[str, Any]:
-        return {"code": 200, "data": snapshot.public_data()}
-
     @app.get("/healthz")
     async def healthz():
         return {
@@ -243,59 +195,7 @@ def create_app(
     async def root():
         if resolved_settings.gateway_enabled:
             return RedirectResponse(url="/admin/")
-        return {"ok": True, "service": "cloudmail-token-broker"}
-
-    @app.post("/v1/token", response_model=TokenResponse)
-    async def get_token(authorization: str | None = Header(default=None)):
-        identity = require_client(authorization)
-        rate_limiter.check(
-            f"token:{identity.client_id}",
-            resolved_settings.token_rate_limit_per_minute,
-        )
-        snapshot, source = await require_token_service().get_token()
-        logger.info("token_served client_id=%s version=%s source=%s", identity.client_id, snapshot.version, source)
-        return token_payload(snapshot)
-
-    @app.post("/v1/token/refresh", response_model=TokenResponse)
-    async def refresh_token(body: RefreshRequest, authorization: str | None = Header(default=None)):
-        identity = require_client(authorization)
-        rate_limiter.check(
-            f"refresh:{identity.client_id}",
-            resolved_settings.refresh_rate_limit_per_minute,
-        )
-        snapshot, source = await require_token_service().refresh(body.version)
-        logger.info("token_refresh client_id=%s version=%s source=%s", identity.client_id, snapshot.version, source)
-        return token_payload(snapshot)
-
-    @app.post("/api/public/genToken")
-    async def compatibility_get_token(
-        _body: dict[str, Any] | None = Body(default=None),
-        authorization: str | None = Header(default=None),
-    ):
-        identity = require_client(authorization)
-        rate_limiter.check(
-            f"compat:{identity.client_id}",
-            resolved_settings.token_rate_limit_per_minute,
-        )
-        snapshot, source = await require_token_service().get_token()
-        logger.info("compat_token_served client_id=%s version=%s source=%s", identity.client_id, snapshot.version, source)
-        return {"code": 200, "data": {"token": snapshot.token}}
-
-    @app.get("/admin/status")
-    async def admin_status(authorization: str | None = Header(default=None)):
-        require_admin(authorization)
-        rate_limiter.check("admin:status", resolved_settings.admin_rate_limit_per_minute * 10)
-        service = require_token_service()
-        return {"ok": True, "service": "cloudmail-token-broker", "token": service.status()}
-
-    @app.post("/admin/token/refresh")
-    async def admin_refresh(authorization: str | None = Header(default=None)):
-        require_admin(authorization)
-        rate_limiter.check("admin:refresh", resolved_settings.admin_rate_limit_per_minute)
-        service = require_token_service()
-        snapshot = await service.force_refresh()
-        logger.info("admin_token_refresh version=%s", snapshot.version)
-        return {"ok": True, "token": service.status()}
+        return {"ok": True, "service": "xiaoasi-mail-gateway", "gatewayEnabled": False}
 
     static_path = Path(resolved_settings.admin_static_dir)
     if resolved_settings.gateway_enabled and static_path.is_dir():

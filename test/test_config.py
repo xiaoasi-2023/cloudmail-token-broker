@@ -5,29 +5,38 @@ import pytest
 from app.config import Settings
 
 
-def set_cloudmail_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CLOUDMAIL_BASE_URL", "https://mail.example.com")
-    monkeypatch.setenv("CLOUDMAIL_ADMIN_EMAIL", "admin@example.com")
-    monkeypatch.setenv("CLOUDMAIL_ADMIN_PASSWORD", "cloudmail-password-secret")
-    monkeypatch.delenv("BROKER_ADMIN_KEY", raising=False)
-    monkeypatch.delenv("BROKER_CLIENT_KEYS_JSON", raising=False)
-    monkeypatch.delenv("BROKER_CLIENT_KEYS", raising=False)
+def set_gateway_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATEWAY_ENABLED", "true")
+    monkeypatch.setenv("GATEWAY_DATABASE_PATH", "data/test-gateway.db")
+    monkeypatch.setenv("DATA_ENCRYPTION_KEY", "data-encryption-key-for-tests-123456")
+    monkeypatch.setenv("MAILBOX_SESSION_SECRET", "mailbox-session-secret-for-tests-12345")
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "correct-password")
+    monkeypatch.delenv("ADMIN_PASSWORD_HASH", raising=False)
 
 
-def test_public_access_allows_empty_broker_keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    set_cloudmail_environment(monkeypatch)
-    monkeypatch.setenv("BROKER_PUBLIC_ACCESS", "true")
+def test_gateway_uses_only_gateway_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_gateway_environment(monkeypatch)
 
     settings = Settings.from_env()
 
-    assert settings.broker_public_access is True
-    assert settings.broker_admin_key == ""
-    assert settings.broker_client_keys == {}
+    assert settings.gateway_enabled is True
+    assert settings.gateway_database_path == "data/test-gateway.db"
+    assert settings.request_timeout_seconds == 15
+    assert settings.admin_login_rate_limit_per_minute == 10
 
 
-def test_private_access_still_requires_client_keys(monkeypatch: pytest.MonkeyPatch) -> None:
-    set_cloudmail_environment(monkeypatch)
-    monkeypatch.setenv("BROKER_PUBLIC_ACCESS", "false")
+def test_gateway_rejects_missing_required_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_gateway_environment(monkeypatch)
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY")
 
-    with pytest.raises(RuntimeError, match="BROKER_CLIENT_KEYS_JSON"):
+    with pytest.raises(RuntimeError, match="DATA_ENCRYPTION_KEY"):
+        Settings.from_env()
+
+
+def test_gateway_rejects_placeholder_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_gateway_environment(monkeypatch)
+    monkeypatch.setenv("MAILBOX_SESSION_SECRET", "replace-with-at-least-48-byte-secret")
+
+    with pytest.raises(RuntimeError, match="MAILBOX_SESSION_SECRET"):
         Settings.from_env()

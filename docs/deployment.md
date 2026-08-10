@@ -25,10 +25,11 @@ cd /www/docker/cloudmail-token-broker
 
 ## 2. 环境变量
 
-### 2.1 网关配置
-
 ```dotenv
 IMAGE_TAG=latest
+
+REQUEST_TIMEOUT_SECONDS=15
+LOG_LEVEL=INFO
 
 GATEWAY_ENABLED=true
 GATEWAY_DATABASE_PATH=/app/data/xiaoasi-mail.db
@@ -53,22 +54,7 @@ MAILBOX_POLL_RATE_LIMIT_PER_MINUTE=600
 - 修改数据加密密钥后，数据库内已保存的 CloudMail 管理员密码无法解密；
 - 修改邮箱会话密钥后，已签发的 `mailboxToken` 全部失效。
 
-本地项目的 `.env` 已生成随机值，但上传前仍应确认管理员密码和 CloudMail 兼容配置。
-
-### 2.2 旧 Token Broker 兼容配置
-
-迁移阶段如仍有旧客户端，可保留：
-
-```dotenv
-CLOUDMAIL_BASE_URL=https://旧的CloudMail地址
-CLOUDMAIL_ADMIN_EMAIL=管理员邮箱
-CLOUDMAIL_ADMIN_PASSWORD=管理员密码
-BROKER_PUBLIC_ACCESS=true
-```
-
-新网关实例和域名不通过这些变量维护，而是在 `/admin/` 页面新增。
-
-没有旧客户端时应保持这三个 CloudMail 兼容变量为空。旧 Token Broker 和新网关若同时操作同一个仍采用全局动态 Token 的 CloudMail 实例，可能互相触发 Token 失效，因此兼容配置只用于短期迁移。
+本地项目的 `.env` 已生成随机值，但上传前仍应确认管理员密码。CloudMail 实例地址、管理员凭据、代理和 TLS 配置全部在 `/admin/` 页面维护，不写入 `.env`。
 
 ## 3. 宝塔容器编排
 

@@ -1,6 +1,6 @@
 [project]
 name = "cloudmail-token-broker"
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-instance CloudMail mailbox gateway and admin console"
 readme = "README.md"
 requires-python = ">=3.11"

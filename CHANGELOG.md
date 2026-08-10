@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- 将服务升级为 Xiaoasi Mail Gateway 0.2.0，支持多个 CloudMail 实例及每实例多个邮箱域名。
+- 将服务升级为 Xiaoasi Mail Gateway 0.3.0，支持多个 CloudMail 实例及每实例多个邮箱域名，并彻底移除旧 Token Broker 对外能力。
 - 新增统一邮箱 API，支持指定域名、域名范围和自动加权路由，调用方不再接触 CloudMail Token。
 - 新增每实例独立 Token 缓存、401/403 比较刷新、失败切换、域名健康和冷却统计；并发鉴权失败只生成一次新 Token，避免再次互相覆盖。
 - 新增幂等邮箱创建、随机邮箱地址、短期 `mailboxToken`、邮箱状态、释放和验证码提取接口。
@@ -14,10 +14,8 @@
 - 限制 `Idempotency-Key` 最大 256 字符，并回收使用完毕的进程内幂等锁，避免公开接口高基数 Key 长期占用内存。
 - 新增管理端登录来源限流；修正 apply 模式下清理脚本实际删除数量统计。
 - 新增 `docs/xiaoasi-mail-gateway-development-plan.md`，确定多 CloudMail 实例、多域名路由、统一邮箱 API、短期邮箱凭证、SQLite 持久化和可视化管理端的完整升级方案。
-- 增加 `BROKER_PUBLIC_ACCESS` 公开调用模式，客户端无需配置独立密钥即可获取和刷新 Token。
-- `BROKER_ADMIN_KEY` 改为可选；留空时管理接口明确返回未启用。
-- 保留原 Client Key 鉴权模式，关闭公开模式后仍可按需启用。
-- 更新本地 `.env`、部署说明和接口示例，默认采用公开调用方式。
+- 删除旧 Token Broker 的 Token 外发接口、单实例环境变量、Client Key 鉴权代码及对应测试。
+- 精简 `.env`、部署说明和接口文档，CloudMail 实例统一由管理端维护。
 - 仓库迁移到 `https://github.com/xiaoasi-2023/cloudmail-token-broker`。
 - 默认部署镜像改为 `registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker`。
 - 发布流程收敛为“提交推送 GitHub → 阿里云自动构建 → 服务器拉取镜像”。

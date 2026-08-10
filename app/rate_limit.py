@@ -4,7 +4,7 @@ import threading
 import time
 from collections import defaultdict, deque
 
-from app.errors import BrokerError
+from app.gateway.business_errors import GatewayBusinessError
 
 
 class InMemoryRateLimiter:
@@ -20,5 +20,5 @@ class InMemoryRateLimiter:
             while events and events[0] <= cutoff:
                 events.popleft()
             if len(events) >= max(1, int(limit)):
-                raise BrokerError("RATE_LIMITED", "请求过于频繁，请稍后重试", 429)
+                raise GatewayBusinessError("RATE_LIMITED", "请求过于频繁，请稍后重试", 429)
             events.append(now)

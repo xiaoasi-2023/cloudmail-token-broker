@@ -9,11 +9,11 @@
 - 目标产品名称：`Xiaoasi Mail Gateway`
 - 客户端 Provider 建议标识：`xiaoasi_gateway`
 
-本方案将当前只负责 CloudMail Token 缓存和中转的服务，升级为完整邮箱网关。图片站、Kirox、Windows EXE 及其他调用方只对接 Xiaoasi Mail Gateway，不再了解 CloudMail 的管理员凭据、Token、接口路径和响应结构。
+本方案建设一个独立的完整邮箱网关。图片站、Kirox、Windows EXE 及其他调用方只对接 Xiaoasi Mail Gateway，不了解 CloudMail 的管理员凭据、Token、接口路径和响应结构。
 
 截至 2026-08-10 已完成：SQLite 持久化、多实例独立 Token、域名路由、幂等建箱、邮箱会话凭证、验证码查询、管理端登录、实例和域名管理、邮箱记录、请求日志、Docker 多阶段构建及数据保留清理脚本。尚待完成的外部工作是接入真实 CloudMail 实例、图片站/Kirox Provider 迁移以及生产宝塔点验。
 
-当前仓库名称和镜像名称在迁移阶段继续保留，避免破坏 GitHub 到阿里云自动构建及宝塔部署链路。待所有调用方完成迁移后，再决定是否重命名仓库和镜像。
+当前仓库名称和镜像名称继续保留，避免破坏 GitHub 到阿里云自动构建及宝塔部署链路；产品名称统一使用 Xiaoasi Mail Gateway。
 
 ## 2. 已确认的产品决策
 
@@ -29,7 +29,7 @@
 10. 创建邮箱后由网关返回短期、单邮箱范围的 `mailboxToken`，后续查询只能访问该邮箱。
 11. 必须提供独立、受鉴权保护的可视化管理端。
 12. 管理端能够维护 CloudMail 实例、域名、运行状态、邮箱记录和请求日志。
-13. 迁移阶段保留当前 Token Broker 接口；所有调用方迁移完成后再关闭 Token 外发。
+13. 网关不提供 CloudMail Token 外发接口，调用方只能使用统一邮箱业务接口。
 
 ## 3. 建设目标
 
@@ -750,17 +750,11 @@ volumes:
 
 同域部署可以避免单独处理跨域、第二个容器和两套发布流程。管理端所有保存、启停、测试连接和删除操作必须展示加载状态和成功或失败反馈。
 
-## 16. 兼容与迁移
+## 16. 调用方接入与边界
 
-### 16.1 迁移阶段保留
+### 16.1 新项目边界
 
-当前接口暂时保留：
-
-- `POST /v1/token`；
-- `POST /v1/token/refresh`；
-- `POST /api/public/genToken`。
-
-这些接口只用于现有客户端迁移，不作为新客户端方案继续扩展。
+Xiaoasi Mail Gateway 是独立新项目，只提供统一邮箱业务接口和管理接口，不提供 CloudMail Token 外发能力。CloudMail Token、管理员账号、管理员密码和上游接口路径只存在于网关内部。
 
 ### 16.2 图片站迁移
 
@@ -780,21 +774,13 @@ xiaoasi_gateway
 
 删除 CloudMail 管理员邮箱、管理员密码、Token 获取和直接 `addUser`、`emailList` 调用。
 
-### 16.3 Kirox 迁移
+### 16.3 Kirox 接入
 
-增加对应网关 Provider，调用统一创建邮箱和查询验证码接口。保留原 CloudMail Provider 一段过渡期，用配置开关切换，确认稳定后删除直接 CloudMail 调用。
+增加对应网关 Provider，调用统一创建邮箱和查询验证码接口，删除直接获取 CloudMail Token 以及直接调用 CloudMail 的实现。
 
-### 16.4 关闭 Token 外发
+### 16.4 其他调用方
 
-满足以下条件后关闭公开 Token 接口：
-
-1. 图片站已全部切换；
-2. Kirox 已全部切换；
-3. EXE 和其他项目已全部切换；
-4. 服务端日志中不再出现旧接口调用；
-5. 已提供明确升级说明和回滚方案。
-
-关闭后 CloudMail Token 只存在网关内部。
+Windows EXE 和其他项目只保存网关地址、域名选择参数、`mailboxId` 与短期 `mailboxToken`，不得保存 CloudMail 管理凭据或请求 CloudMail Token。
 
 ## 17. 错误码建议
 
@@ -863,9 +849,8 @@ xiaoasi_gateway
 - 引入 SQLite 和数据库迁移；
 - 实现实例和域名数据模型；
 - 实现管理员敏感字段加密；
-- 将 TokenService 改为按实例隔离；
+- 实现按 CloudMail 实例隔离的 Token 缓存和并发刷新锁；
 - 实现实例连接测试和健康状态；
-- 为现有 Token 接口保留兼容实现。
 
 ### 阶段二：邮箱网关业务 API
 
@@ -892,9 +877,8 @@ xiaoasi_gateway
 - 图片站新增 `xiaoasi_gateway`；
 - Kirox 新增网关 Provider；
 - EXE 和其他项目接入；
-- 灰度切换并保留回滚；
-- 统计旧接口调用；
-- 最终关闭 Token 外发接口。
+- 灰度切换并保留调用方回滚方案；
+- 验证所有调用方均不保存 CloudMail 管理凭据或 Token。
 
 ### 阶段五：运维和清理
 
