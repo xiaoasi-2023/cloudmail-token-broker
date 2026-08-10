@@ -82,8 +82,12 @@ export const api = {
   updateClientKey: (id: number, enabled: boolean) => request<ApiEnvelope<ClientKey>>(`/client-keys/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
   regenerateClientKey: (id: number) => request<ApiEnvelope<ClientKey>>(`/client-keys/${id}/regenerate`, { method: "POST" }),
   deleteClientKey: (id: number) => request(`/client-keys/${id}`, { method: "DELETE" }),
-  mailboxes: async (limit = 100, offset = 0) =>
-    (await request<ApiEnvelope<MailboxRecord[]>>(`/mailboxes?limit=${limit}&offset=${offset}`)).data,
+  mailboxes: async (limit = 100, offset = 0, keyword = "", purpose = "") => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (keyword.trim()) params.set("keyword", keyword.trim());
+    if (purpose.trim()) params.set("purpose", purpose.trim());
+    return (await request<ApiEnvelope<MailboxRecord[]>>(`/mailboxes?${params.toString()}`)).data;
+  },
   requestLogs: async (limit = 100, offset = 0) =>
     (await request<ApiEnvelope<RequestLog[]>>(`/request-logs?limit=${limit}&offset=${offset}`)).data,
 };

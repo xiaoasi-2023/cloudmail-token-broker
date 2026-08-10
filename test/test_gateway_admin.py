@@ -227,13 +227,47 @@ def test_overview_mailbox_and_log_lists_are_available(tmp_path: Path) -> None:
             "admin_password": "secret",
         }
     )
-    repository.create_domain({"instance_id": instance["id"], "domain": "mail.example.com"})
+    domain = repository.create_domain({"instance_id": instance["id"], "domain": "mail.example.com"})
+    with repository.database.transaction() as connection:
+        connection.execute(
+            """INSERT INTO mailboxes
+            (id,address,domain_id,instance_id,purpose,source,status,
+             verification_status,verification_code,provider_reference,
+             created_at,expires_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "mbx-admin-list",
+                "user@mail.example.com",
+                domain["id"],
+                instance["id"],
+                "openai",
+                "image2api",
+                "active",
+                "received",
+                "204030",
+                "user@mail.example.com",
+                "2026-08-10T10:00:00+00:00",
+                "2026-08-10T10:30:00+00:00",
+                "2026-08-10T10:00:00+00:00",
+            ),
+        )
 
     overview = client.get("/admin-api/overview")
     mailboxes = client.get("/admin-api/mailboxes")
+    mailboxes_by_address = client.get("/admin-api/mailboxes?keyword=USER@MAIL")
+    mailboxes_by_domain = client.get("/admin-api/mailboxes?keyword=mail.example")
+    mailboxes_by_source = client.get("/admin-api/mailboxes?keyword=IMAGE2API")
+    mailboxes_by_purpose = client.get("/admin-api/mailboxes?purpose=openai")
+    mailboxes_wrong_purpose = client.get("/admin-api/mailboxes?purpose=cursor")
     logs = client.get("/admin-api/request-logs")
 
     assert overview.json()["data"]["instance_total"] == 1
     assert overview.json()["data"]["domain_total"] == 1
-    assert mailboxes.json()["data"] == []
+    assert mailboxes.json()["data"][0]["verification_status"] == "received"
+    assert mailboxes.json()["data"][0]["verification_code"] == "204030"
+    assert len(mailboxes_by_address.json()["data"]) == 1
+    assert len(mailboxes_by_domain.json()["data"]) == 1
+    assert len(mailboxes_by_source.json()["data"]) == 1
+    assert len(mailboxes_by_purpose.json()["data"]) == 1
+    assert mailboxes_wrong_purpose.json()["data"] == []
     assert logs.json()["data"] == []

@@ -55,8 +55,14 @@ class MemoryStore:
     def mark_domain_failure(self, domain_id: int, error_code: str) -> None:
         self.failures.append((domain_id, error_code))
 
-    def set_verification_status(self, mailbox_id: str, status: str) -> None:
+    def set_verification_status(
+        self,
+        mailbox_id: str,
+        status: str,
+        verification_code: str = "",
+    ) -> None:
         self.mailboxes[mailbox_id].verification_status = status
+        self.mailboxes[mailbox_id].verification_code = verification_code
 
 
 def instance(instance_id: int, base_url: str = "https://mail.test") -> CloudMailInstanceConfig:
@@ -252,6 +258,7 @@ def test_mailbox_service_create_is_idempotent_and_extracts_new_code() -> None:
         assert result.status == "received"
         assert result.verification_code == "482913"
         assert store.mailboxes[first.mailbox_id].verification_status == "received"
+        assert store.mailboxes[first.mailbox_id].verification_code == "482913"
 
     asyncio.run(scenario())
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.gateway.database import GatewayDatabase, SCHEMA_VERSION
 from app.main import create_app
 
 
@@ -87,3 +88,42 @@ def test_legacy_token_broker_routes_are_not_exposed(tmp_path: Path) -> None:
         assert client.post("/api/public/genToken", json={}).status_code == 404
         assert client.get("/admin/status").status_code == 404
         assert client.post("/admin/token/refresh").status_code == 404
+
+
+def test_schema_upgrade_adds_persisted_verification_code_column(tmp_path: Path) -> None:
+    database = GatewayDatabase(tmp_path / "legacy-v2.db")
+    with database.transaction() as connection:
+        connection.execute("CREATE TABLE gateway_schema(version INTEGER NOT NULL)")
+        connection.execute("INSERT INTO gateway_schema(version) VALUES (2)")
+        connection.execute(
+            """CREATE TABLE mailboxes (
+                id TEXT PRIMARY KEY,
+                address TEXT NOT NULL UNIQUE,
+                domain_id BIGINT NOT NULL,
+                instance_id BIGINT NOT NULL,
+                purpose TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                verification_status TEXT NOT NULL DEFAULT 'pending',
+                provider_reference TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """INSERT INTO mailboxes
+            (id,address,domain_id,instance_id,created_at,updated_at)
+            VALUES ('mbx-old','old@example.com',1,1,'2026-08-10T00:00:00+00:00','2026-08-10T00:00:00+00:00')"""
+        )
+
+    database.initialize()
+
+    with database.read() as connection:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(mailboxes)").fetchall()}
+        version = connection.execute("SELECT version FROM gateway_schema").fetchone()["version"]
+        mailbox = connection.execute("SELECT verification_code FROM mailboxes WHERE id='mbx-old'").fetchone()
+
+    assert "verification_code" in columns
+    assert version == SCHEMA_VERSION == 3
+    assert mailbox["verification_code"] == ""

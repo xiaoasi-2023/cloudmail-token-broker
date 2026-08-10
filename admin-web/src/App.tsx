@@ -100,6 +100,7 @@ function statusTag(status?: string) {
     disabled: { color: "default", text: "停用" },
     cooldown: { color: "warning", text: "冷却中" },
     pending: { color: "processing", text: "等待中" },
+    timeout: { color: "warning", text: "已超时" },
     released: { color: "default", text: "已释放" },
     unknown: { color: "default", text: "未检测" },
   };
@@ -474,7 +475,8 @@ function ClientKeysPage() {
 
 function MailboxesPage() {
   const [items, setItems] = useState<MailboxRecord[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
-  const load = useCallback(async () => { setLoading(true); setError(""); try { setItems(await api.mailboxes()); } catch (e) { setError(getErrorMessage(e)); } finally { setLoading(false); } }, []);
+  const [keyword, setKeyword] = useState(""); const [appliedKeyword, setAppliedKeyword] = useState(""); const [purpose, setPurpose] = useState("");
+  const load = useCallback(async () => { setLoading(true); setError(""); try { setItems(await api.mailboxes(100, 0, appliedKeyword, purpose)); } catch (e) { setError(getErrorMessage(e)); } finally { setLoading(false); } }, [appliedKeyword, purpose]);
   useEffect(() => { void load(); }, [load]);
   const columns: ColumnsType<MailboxRecord> = [
     { title: "邮箱地址", dataIndex: "address", render: (v) => <Text copyable>{v}</Text> },
@@ -482,10 +484,19 @@ function MailboxesPage() {
     { title: "域名", dataIndex: "domain", responsive: ["lg"] },
     { title: "所属实例", dataIndex: "instance_name", responsive: ["lg"] },
     { title: "邮箱状态", dataIndex: "status", width: 100, render: statusTag },
-    { title: "验证码", dataIndex: "verification_status", width: 100, render: statusTag },
-    { title: "创建时间", dataIndex: "created_at", width: 170, render: formatTime },
+    {
+      title: "验证码",
+      key: "verification_code",
+      width: 150,
+      render: (_, record) => record.verification_code
+        ? <Text code copyable={{ text: record.verification_code }}>{record.verification_code}</Text>
+        : record.verification_status === "received"
+          ? <Tag>旧记录未保存</Tag>
+          : statusTag(record.verification_status),
+    },
+    { title: "创建时间", dataIndex: "created_at", width: 205, render: (value) => <span className="mailbox-created-at">{formatTime(value)}</span> },
   ];
-  return <><div className="toolbar"><Text type="secondary">仅展示脱敏处理状态，不返回邮箱密码、验证码和邮件正文</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>{error ? <ErrorState error={error} retry={load} /> : <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="尚无邮箱创建记录" /> }} scroll={{ x: 980 }} />}</>;
+  return <><div className="toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索邮箱、域名或调用方" style={{ width: 300 }} /><Select allowClear value={purpose || undefined} onChange={(value) => setPurpose(value || "")} placeholder="全部类型" style={{ width: 150 }} options={[{ value: "openai", label: "OpenAI" }, { value: "kiro", label: "Kiro" }, { value: "cursor", label: "Cursor" }, { value: "grok", label: "Grok" }]} /></div><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>{error ? <ErrorState error={error} retry={load} /> : <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="没有符合条件的邮箱记录" /> }} scroll={{ x: 1065 }} />}</>;
 }
 
 function LogsPage() {

@@ -94,6 +94,7 @@ class DatabaseGatewayBusinessStore:
             source=str(row["source"]),
             status=str(row["status"]),
             verification_status=str(row["verification_status"]),
+            verification_code=str(row["verification_code"]),
             provider_reference=str(row["provider_reference"]),
             created_at=created_at,
             expires_at=expires_at,
@@ -109,8 +110,9 @@ class DatabaseGatewayBusinessStore:
             connection.execute(
                 """INSERT INTO mailboxes
                 (id, address, domain_id, instance_id, purpose, source, status,
-                 verification_status, provider_reference, created_at, expires_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 verification_status, verification_code, provider_reference,
+                 created_at, expires_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     mailbox.id,
                     mailbox.address,
@@ -120,6 +122,7 @@ class DatabaseGatewayBusinessStore:
                     mailbox.source,
                     mailbox.status,
                     mailbox.verification_status,
+                    mailbox.verification_code,
                     mailbox.provider_reference,
                     mailbox.created_at.isoformat(),
                     mailbox.expires_at.isoformat(),
@@ -199,11 +202,18 @@ class DatabaseGatewayBusinessStore:
                 ),
             )
 
-    def set_verification_status(self, mailbox_id: str, status: str) -> None:
+    def set_verification_status(
+        self,
+        mailbox_id: str,
+        status: str,
+        verification_code: str = "",
+    ) -> None:
         with self.database.transaction() as connection:
             connection.execute(
-                "UPDATE mailboxes SET verification_status=?, updated_at=? WHERE id=?",
-                (status, _now().isoformat(), mailbox_id),
+                """UPDATE mailboxes
+                SET verification_status=?, verification_code=?, updated_at=?
+                WHERE id=?""",
+                (status, verification_code, _now().isoformat(), mailbox_id),
             )
 
     def set_mailbox_status(self, mailbox_id: str, status: str) -> None:

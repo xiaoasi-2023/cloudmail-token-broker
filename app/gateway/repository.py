@@ -243,12 +243,36 @@ class GatewayRepository:
             ).fetchone()
         return dict(row)
 
-    def list_mailboxes(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def list_mailboxes(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        keyword: str = "",
+        purpose: str = "",
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        normalized_keyword = keyword.strip().lower()
+        normalized_purpose = purpose.strip().lower()
+        if normalized_keyword:
+            like_keyword = f"%{normalized_keyword}%"
+            conditions.append(
+                "(LOWER(m.address) LIKE ? OR LOWER(d.domain) LIKE ? OR LOWER(m.source) LIKE ?)"
+            )
+            params.extend([like_keyword, like_keyword, like_keyword])
+        if normalized_purpose:
+            conditions.append("LOWER(m.purpose) = ?")
+            params.append(normalized_purpose)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.extend([limit, offset])
         with self.database.read() as connection:
             rows = connection.execute(
-                """SELECT m.*, d.domain, i.name AS instance_name FROM mailboxes m
+                f"""SELECT m.*, d.domain, i.name AS instance_name FROM mailboxes m
                 JOIN mail_domains d ON d.id=m.domain_id JOIN cloudmail_instances i ON i.id=m.instance_id
-                ORDER BY m.created_at DESC LIMIT ? OFFSET ?""", (limit, offset),
+                {where_clause}
+                ORDER BY m.created_at DESC LIMIT ? OFFSET ?""",
+                params,
             ).fetchall()
         return [dict(row) for row in rows]
 

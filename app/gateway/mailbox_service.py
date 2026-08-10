@@ -175,7 +175,7 @@ class MailboxGatewayService:
                 mailbox_created_at=mailbox.created_at,
             )
             if code:
-                self.store.set_verification_status(mailbox.id, "received")
+                self.store.set_verification_status(mailbox.id, "received", code)
                 return VerificationCodeData(status="received", verificationCode=code)
             if time.monotonic() >= deadline:
                 if request.wait_seconds:

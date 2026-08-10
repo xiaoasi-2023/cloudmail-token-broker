@@ -282,9 +282,19 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
     @router.get("/mailboxes")
     async def list_mailboxes(
         limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0),
+        keyword: str = Query(default="", max_length=100),
+        purpose: str = Query(default="", max_length=32),
         _username: str = Depends(current_admin),
     ):
-        return {"ok": True, "data": context.repository.list_mailboxes(limit, offset)}
+        return {
+            "ok": True,
+            "data": context.repository.list_mailboxes(
+                limit,
+                offset,
+                keyword=keyword,
+                purpose=purpose,
+            ),
+        }
 
     @router.get("/request-logs")
     async def list_request_logs(

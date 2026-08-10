@@ -185,6 +185,7 @@ Mailbox            1 ---- N GatewayRequestLog
 | `expires_at` | DATETIME | 网关邮箱会话过期时间 |
 | `status` | VARCHAR | `creating`、`active`、`failed`、`expired`、`deleted` |
 | `verification_status` | VARCHAR | `pending`、`received`、`timeout`、`failed` |
+| `verification_code` | VARCHAR | 已识别验证码；仅管理端鉴权后展示，不写入请求日志 |
 | `last_polled_at` | DATETIME | 最近查询邮件时间 |
 | `provider_reference` | VARCHAR | 内部 Provider 引用，不向客户端返回 |
 | `error_code` | VARCHAR | 最近脱敏错误码 |

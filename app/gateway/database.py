@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.pool import StaticPool
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 logger = logging.getLogger("xiaoasi_mail_gateway.database")
 
 
@@ -194,6 +194,7 @@ class GatewayDatabase:
                     source TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'active',
                     verification_status TEXT NOT NULL DEFAULT 'pending',
+                    verification_code TEXT NOT NULL DEFAULT '',
                     provider_reference TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     expires_at TEXT,
@@ -262,6 +263,20 @@ class GatewayDatabase:
 
             if current_version > SCHEMA_VERSION:
                 raise RuntimeError(f"不支持的 Gateway 数据库版本: {current_version}")
+
+            if self.dialect_name == "postgresql":
+                connection.execute(
+                    "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS verification_code TEXT NOT NULL DEFAULT ''"
+                )
+            else:
+                mailbox_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(mailboxes)").fetchall()
+                }
+                if "verification_code" not in mailbox_columns:
+                    connection.execute(
+                        "ALTER TABLE mailboxes ADD COLUMN verification_code TEXT NOT NULL DEFAULT ''"
+                    )
 
             connection.executescript(
                 """

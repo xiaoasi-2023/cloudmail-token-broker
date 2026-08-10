@@ -41,6 +41,7 @@ class MailboxRecord:
     expires_at: datetime
     status: str = "active"
     verification_status: str = "pending"
+    verification_code: str = ""
 
 
 @dataclass(frozen=True, slots=True)

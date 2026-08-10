@@ -49,6 +49,7 @@ export interface MailboxRecord {
   source?: string;
   status: string;
   verification_status?: string;
+  verification_code?: string;
   domain: string;
   instance_name: string;
   created_at: string;
