@@ -211,6 +211,80 @@ function OverviewPage() {
   );
 }
 
+type InstanceDomainForm = Omit<DomainPayload, "instance_id">;
+
+function InstanceDomainsPanel({ instanceId, onChanged }: { instanceId: number; onChanged: () => Promise<void> }) {
+  const { message } = AntApp.useApp();
+  const [items, setItems] = useState<MailDomain[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<MailDomain>();
+  const [saving, setSaving] = useState(false);
+  const [form] = Form.useForm<InstanceDomainForm>();
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try { setItems(await api.domains(instanceId)); }
+    catch (e) { setError(getErrorMessage(e)); }
+    finally { setLoading(false); }
+  }, [instanceId]);
+  useEffect(() => { void load(); }, [load]);
+
+  const openCreate = () => {
+    setEditing(undefined);
+    form.resetFields();
+    form.setFieldsValue({ enabled: true, weight: 100, remark: "" });
+    setModalOpen(true);
+  };
+  const openEdit = (record: MailDomain) => {
+    setEditing(record);
+    form.setFieldsValue({ domain: record.domain, enabled: record.enabled, weight: record.weight, remark: record.remark });
+    setModalOpen(true);
+  };
+  const submit = async () => {
+    const values = await form.validateFields();
+    setSaving(true);
+    try {
+      if (editing) await api.updateDomain(editing.id, values);
+      else await api.createDomain({ ...values, instance_id: instanceId });
+      message.success(editing ? "邮箱域名已更新" : "邮箱域名已添加到当前实例");
+      setModalOpen(false);
+      await Promise.all([load(), onChanged()]);
+    } catch (e) { message.error(getErrorMessage(e)); }
+    finally { setSaving(false); }
+  };
+  const remove = async (id: number) => {
+    try {
+      await api.deleteDomain(id);
+      message.success("邮箱域名已删除");
+      await Promise.all([load(), onChanged()]);
+    } catch (e) { message.error(getErrorMessage(e)); }
+  };
+
+  const columns: ColumnsType<MailDomain> = [
+    { title: "邮箱域名", key: "domain", render: (_, r) => <div className="primary-cell"><b>{r.domain}</b><span>{r.remark || "无备注"}</span></div> },
+    { title: "权重", dataIndex: "weight", width: 70 },
+    { title: "调度", dataIndex: "enabled", width: 82, render: (enabled: boolean) => <Badge status={enabled ? "success" : "default"} text={enabled ? "启用" : "停用"} /> },
+    { title: "操作", key: "actions", width: 126, render: (_, r) => <Space size={4}><Button type="link" size="small" onClick={() => openEdit(r)}>编辑</Button><Popconfirm title="确认删除该域名？" onConfirm={() => void remove(r.id)}><Button type="link" size="small" danger>删除</Button></Popconfirm></Space> },
+  ];
+
+  return <Card className="instance-domains-card" title={<span><GlobalOutlined /> 当前实例的邮箱域名</span>} extra={<Button type="primary" ghost size="small" icon={<PlusOutlined />} onClick={openCreate}>添加域名</Button>}>
+    <Text type="secondary">调用方指定域名或自动分配邮箱时，网关会通过这里的归属关系选择当前 CloudMail 实例。</Text>
+    {error && <Alert className="embedded-alert" type="error" showIcon message="域名列表加载失败" description={error} action={<Button size="small" onClick={() => void load()}>重试</Button>} />}
+    <Table className="embedded-table" rowKey="id" size="small" loading={loading} columns={columns} dataSource={items} pagination={false} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前实例还没有邮箱域名" /> }} scroll={{ x: 500 }} />
+    <Modal title={editing ? "编辑当前实例的邮箱域名" : "为当前实例添加邮箱域名"} open={modalOpen} confirmLoading={saving} onOk={() => void submit()} onCancel={() => setModalOpen(false)} okText="保存" cancelText="取消" destroyOnClose>
+      <Alert className="form-alert" type="info" showIcon message="域名将自动绑定到当前 CloudMail 实例，无需再次选择实例。" />
+      <Form form={form} layout="vertical" requiredMark={false}>
+        <Form.Item label="邮箱域名" name="domain" rules={[{ required: true, message: "请输入邮箱域名" }, { pattern: /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/, message: "请输入有效域名" }]}><Input placeholder="例如：mail.example.com" /></Form.Item>
+        <Form.Item label="调度权重" name="weight" tooltip="权重越大，自动选择时被选中的概率越高" rules={[{ required: true }]}><InputNumber min={1} max={10000} style={{ width: "100%" }} /></Form.Item>
+        <Form.Item label="管理备注" name="remark"><Input.TextArea rows={3} maxLength={500} showCount /></Form.Item>
+        <Form.Item label="参与邮箱调度" name="enabled" valuePropName="checked"><Switch /></Form.Item>
+      </Form>
+    </Modal>
+  </Card>;
+}
+
 function InstancesPage() {
   const { message } = AntApp.useApp();
   const [items, setItems] = useState<CloudMailInstance[]>([]);
@@ -242,8 +316,14 @@ function InstancesPage() {
         const payload = { ...values };
         if (!payload.admin_password) delete payload.admin_password;
         await api.updateInstance(editing.id, payload);
-      } else await api.createInstance(values);
-      message.success(editing ? "实例已更新" : "实例已创建"); setDrawerOpen(false); await load();
+        message.success("实例已更新"); setDrawerOpen(false); await load();
+      } else {
+        const created = await api.createInstance(values);
+        setEditing(created.data);
+        form.setFieldsValue({ ...values, admin_password: "" });
+        message.success("实例已创建，请继续为该实例添加邮箱域名");
+        await load();
+      }
     } catch (e) { message.error(getErrorMessage(e)); } finally { setSaving(false); }
   };
   const test = async (id: number) => {
@@ -269,7 +349,7 @@ function InstancesPage() {
   return <>
     <div className="toolbar"><Text type="secondary">共 {items.length} 个实例</Text><Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button><Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增实例</Button></Space></div>
     {error ? <ErrorState error={error} retry={load} /> : <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无 CloudMail 实例" /> }} scroll={{ x: 920 }} />}
-    <Drawer title={editing ? "编辑 CloudMail 实例" : "新增 CloudMail 实例"} width={520} open={drawerOpen} onClose={() => setDrawerOpen(false)} extra={<Space><Button onClick={() => setDrawerOpen(false)}>取消</Button><Button type="primary" loading={saving} onClick={() => void submit()}>保存</Button></Space>}>
+    <Drawer title={editing ? "编辑 CloudMail 实例" : "新增 CloudMail 实例"} width={620} open={drawerOpen} onClose={() => setDrawerOpen(false)} extra={<Space><Button onClick={() => setDrawerOpen(false)}>{editing ? "关闭" : "取消"}</Button><Button type="primary" loading={saving} onClick={() => void submit()}>{editing ? "保存实例" : "创建并配置域名"}</Button></Space>}>
       <Alert className="form-alert" type="info" showIcon message="管理员密码加密保存，保存后不会返回前端。编辑时留空表示不修改。" />
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item label="实例名称" name="name" rules={[{ required: true, message: "请输入实例名称" }]}><Input placeholder="例如：CloudMail 主实例" /></Form.Item>
@@ -279,6 +359,7 @@ function InstancesPage() {
         <Form.Item label="代理地址（可选）" name="proxy_url"><Input placeholder="http://mihomo:11004" /></Form.Item>
         <div className="switch-row"><Form.Item label="校验 TLS 证书" name="verify_tls" valuePropName="checked"><Switch /></Form.Item><Form.Item label="参与邮箱调度" name="enabled" valuePropName="checked"><Switch /></Form.Item></div>
       </Form>
+      {editing && <InstanceDomainsPanel instanceId={editing.id} onChanged={load} />}
     </Drawer>
   </>;
 }
@@ -288,16 +369,21 @@ function DomainsPage() {
   const [items, setItems] = useState<MailDomain[]>([]);
   const [instances, setInstances] = useState<CloudMailInstance[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [domainError, setDomainError] = useState("");
+  const [instanceError, setInstanceError] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<MailDomain>();
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<DomainPayload>();
 
   const load = useCallback(async () => {
-    setLoading(true); setError("");
-    try { const [domains, cloudmailInstances] = await Promise.all([api.domains(), api.instances()]); setItems(domains); setInstances(cloudmailInstances); }
-    catch (e) { setError(getErrorMessage(e)); } finally { setLoading(false); }
+    setLoading(true); setDomainError(""); setInstanceError("");
+    const [domainsResult, instancesResult] = await Promise.allSettled([api.domains(), api.instances()]);
+    if (domainsResult.status === "fulfilled") setItems(domainsResult.value);
+    else setDomainError(getErrorMessage(domainsResult.reason));
+    if (instancesResult.status === "fulfilled") setInstances(instancesResult.value);
+    else setInstanceError(getErrorMessage(instancesResult.reason));
+    setLoading(false);
   }, []);
   useEffect(() => { void load(); }, [load]);
   const openCreate = () => { setEditing(undefined); form.resetFields(); form.setFieldsValue({ enabled: true, weight: 100, remark: "" }); setDrawerOpen(true); };
@@ -320,8 +406,10 @@ function DomainsPage() {
   ];
   return <>
     <div className="toolbar"><Text type="secondary">共 {items.length} 个域名，自动模式按启用状态与权重选择</Text><Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button><Button type="primary" icon={<PlusOutlined />} disabled={!instances.length} onClick={openCreate}>新增域名</Button></Space></div>
-    {!instances.length && !loading && !error && <Alert className="page-alert" type="warning" showIcon message="请先创建 CloudMail 实例，再添加邮箱域名。" />}
-    {error ? <ErrorState error={error} retry={load} /> : <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无邮箱域名" /> }} scroll={{ x: 920 }} />}
+    {domainError && <Alert className="page-alert" type="error" showIcon message="邮箱域名加载失败" description={domainError} action={<Button size="small" onClick={() => void load()}>重新加载</Button>} />}
+    {instanceError && <Alert className="page-alert" type="error" showIcon message="CloudMail 实例加载失败" description={`${instanceError}，暂时不能新增或调整域名归属。`} action={<Button size="small" onClick={() => void load()}>重新加载</Button>} />}
+    {!instances.length && !loading && !instanceError && <Alert className="page-alert" type="warning" showIcon message="请先创建 CloudMail 实例，再添加邮箱域名。" />}
+    <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description={domainError ? "域名数据暂不可用" : "暂无邮箱域名"} /> }} scroll={{ x: 920 }} />
     <Drawer title={editing ? "编辑邮箱域名" : "新增邮箱域名"} width={480} open={drawerOpen} onClose={() => setDrawerOpen(false)} extra={<Space><Button onClick={() => setDrawerOpen(false)}>取消</Button><Button type="primary" loading={saving} onClick={() => void submit()}>保存</Button></Space>}>
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item label="所属实例" name="instance_id" rules={[{ required: true, message: "请选择 CloudMail 实例" }]}><Select options={instances.map((item) => ({ value: item.id, label: item.name, disabled: !item.enabled }))} placeholder="选择负责该域名的实例" /></Form.Item>

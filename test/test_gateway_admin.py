@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -105,6 +106,67 @@ def test_instance_and_domain_crud_never_returns_password(tmp_path: Path) -> None
     assert domain.json()["data"]["domain"] == "mail-a.example.com"
     assert domain_updated.json()["data"]["weight"] == 300
     assert cleared.json()["data"]["failure_count"] == 0
+
+
+def test_domain_list_supports_empty_and_instance_filter(tmp_path: Path) -> None:
+    client, repository = build_client(tmp_path)
+    login(client)
+    instance_a = repository.create_instance(
+        {"name": "instance-a", "base_url": "https://a.example.com", "admin_email": "a@example.com", "admin_password": "secret"}
+    )
+    instance_b = repository.create_instance(
+        {"name": "instance-b", "base_url": "https://b.example.com", "admin_email": "b@example.com", "admin_password": "secret"}
+    )
+
+    empty = client.get("/admin-api/domains")
+    repository.create_domain({"instance_id": instance_a["id"], "domain": "a.example.com"})
+    repository.create_domain({"instance_id": instance_b["id"], "domain": "b.example.com"})
+    filtered = client.get(f"/admin-api/domains?instance_id={instance_a['id']}")
+
+    assert empty.status_code == 200
+    assert empty.json()["data"] == []
+    assert filtered.status_code == 200
+    assert [item["domain"] for item in filtered.json()["data"]] == ["a.example.com"]
+    assert filtered.json()["data"][0]["instance_name"] == "instance-a"
+
+
+def test_initialize_repairs_early_gateway_database_schema(tmp_path: Path) -> None:
+    database_path = tmp_path / "legacy.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE gateway_schema (version INTEGER NOT NULL);
+            INSERT INTO gateway_schema(version) VALUES (1);
+            CREATE TABLE cloudmail_instances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                base_url TEXT NOT NULL,
+                admin_email TEXT NOT NULL,
+                admin_password_encrypted TEXT NOT NULL
+            );
+            INSERT INTO cloudmail_instances(name, base_url, admin_email, admin_password_encrypted)
+            VALUES ('legacy-instance', 'https://legacy.example.com', 'admin@example.com', 'encrypted:terces');
+            CREATE TABLE mail_domains (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT NOT NULL UNIQUE
+            );
+            INSERT INTO mail_domains(domain) VALUES ('legacy-mail.example.com');
+            """
+        )
+
+    database = GatewayDatabase(database_path)
+    database.initialize()
+    repository = GatewayRepository(database, TestCipher())
+
+    with database.read() as connection:
+        version = connection.execute("SELECT version FROM gateway_schema").fetchone()["version"]
+        domain_columns = {row["name"] for row in connection.execute("PRAGMA table_info(mail_domains)")}
+    domains = repository.list_domains()
+
+    assert version == 2
+    assert {"instance_id", "status", "remark", "success_count", "failure_total"} <= domain_columns
+    assert domains[0]["instance_name"] == "legacy-instance"
+    assert domains[0]["status"] == "unknown"
 
 
 def test_duplicate_instance_and_domain_return_conflict(tmp_path: Path) -> None:

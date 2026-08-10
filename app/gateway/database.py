@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+logger = logging.getLogger("xiaoasi_mail_gateway.database")
 
 
 class GatewayDatabase:
@@ -145,14 +147,114 @@ class GatewayDatabase:
                     created_at TEXT NOT NULL
                 );
 
+                """
+            )
+            current = connection.execute("SELECT version FROM gateway_schema LIMIT 1").fetchone()
+            if current is None:
+                connection.execute("INSERT INTO gateway_schema(version) VALUES (0)")
+                current_version = 0
+            else:
+                current_version = int(current["version"])
+
+            if current_version > SCHEMA_VERSION:
+                raise RuntimeError(f"不支持的 Gateway 数据库版本: {current['version']}")
+
+            self._repair_additive_schema(connection)
+            connection.executescript(
+                """
                 CREATE INDEX IF NOT EXISTS idx_domains_instance ON mail_domains(instance_id);
                 CREATE INDEX IF NOT EXISTS idx_mailboxes_created ON mailboxes(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_request_logs_created ON gateway_request_logs(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
                 """
             )
-            current = connection.execute("SELECT version FROM gateway_schema LIMIT 1").fetchone()
-            if current is None:
-                connection.execute("INSERT INTO gateway_schema(version) VALUES (?)", (SCHEMA_VERSION,))
-            elif current["version"] != SCHEMA_VERSION:
-                raise RuntimeError(f"不支持的 Gateway 数据库版本: {current['version']}")
+            connection.execute("UPDATE gateway_schema SET version = ?", (SCHEMA_VERSION,))
+            if current_version != SCHEMA_VERSION:
+                logger.info("gateway_database_schema_upgraded from=%s to=%s", current_version, SCHEMA_VERSION)
+
+    @staticmethod
+    def _column_names(connection: sqlite3.Connection, table: str) -> set[str]:
+        return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})")}
+
+    def _add_missing_columns(
+        self,
+        connection: sqlite3.Connection,
+        table: str,
+        columns: dict[str, str],
+    ) -> None:
+        existing = self._column_names(connection, table)
+        for name, definition in columns.items():
+            if name not in existing:
+                connection.execute(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {definition}')
+                logger.info("gateway_database_column_added table=%s column=%s", table, name)
+
+    def _repair_additive_schema(self, connection: sqlite3.Connection) -> None:
+        """补齐早期镜像创建的 SQLite 表字段，避免持久化旧库升级后管理接口报 500。"""
+
+        self._add_missing_columns(
+            connection,
+            "cloudmail_instances",
+            {
+                "proxy_url": "TEXT NOT NULL DEFAULT ''",
+                "verify_tls": "INTEGER NOT NULL DEFAULT 1",
+                "enabled": "INTEGER NOT NULL DEFAULT 1",
+                "health_status": "TEXT NOT NULL DEFAULT 'unknown'",
+                "last_checked_at": "TEXT",
+                "last_error": "TEXT NOT NULL DEFAULT ''",
+                "created_at": "TEXT NOT NULL DEFAULT ''",
+                "updated_at": "TEXT NOT NULL DEFAULT ''",
+            },
+        )
+        self._add_missing_columns(
+            connection,
+            "mail_domains",
+            {
+                "instance_id": "INTEGER REFERENCES cloudmail_instances(id) ON DELETE CASCADE",
+                "enabled": "INTEGER NOT NULL DEFAULT 1",
+                "weight": "INTEGER NOT NULL DEFAULT 100",
+                "status": "TEXT NOT NULL DEFAULT 'unknown'",
+                "failure_count": "INTEGER NOT NULL DEFAULT 0",
+                "cooldown_until": "TEXT",
+                "last_used_at": "TEXT",
+                "success_count": "INTEGER NOT NULL DEFAULT 0",
+                "failure_total": "INTEGER NOT NULL DEFAULT 0",
+                "remark": "TEXT NOT NULL DEFAULT ''",
+                "created_at": "TEXT NOT NULL DEFAULT ''",
+                "updated_at": "TEXT NOT NULL DEFAULT ''",
+            },
+        )
+        self._add_missing_columns(
+            connection,
+            "mailboxes",
+            {
+                "purpose": "TEXT NOT NULL DEFAULT ''",
+                "source": "TEXT NOT NULL DEFAULT ''",
+                "status": "TEXT NOT NULL DEFAULT 'active'",
+                "verification_status": "TEXT NOT NULL DEFAULT 'pending'",
+                "provider_reference": "TEXT NOT NULL DEFAULT ''",
+                "created_at": "TEXT NOT NULL DEFAULT ''",
+                "expires_at": "TEXT",
+                "updated_at": "TEXT NOT NULL DEFAULT ''",
+            },
+        )
+        self._add_missing_columns(
+            connection,
+            "gateway_request_logs",
+            {
+                "source": "TEXT NOT NULL DEFAULT ''",
+                "mailbox_id": "TEXT",
+                "instance_id": "INTEGER",
+                "domain_id": "INTEGER",
+                "duration_ms": "INTEGER NOT NULL DEFAULT 0",
+                "error_code": "TEXT NOT NULL DEFAULT ''",
+                "error_message": "TEXT NOT NULL DEFAULT ''",
+                "created_at": "TEXT NOT NULL DEFAULT ''",
+            },
+        )
+
+        instance_ids = [row["id"] for row in connection.execute("SELECT id FROM cloudmail_instances ORDER BY id")]
+        if len(instance_ids) == 1:
+            connection.execute(
+                "UPDATE mail_domains SET instance_id = ? WHERE instance_id IS NULL",
+                (instance_ids[0],),
+            )

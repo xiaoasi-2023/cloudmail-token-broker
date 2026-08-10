@@ -63,6 +63,12 @@ button, input, textarea { font: inherit; }
 .form-alert { margin-bottom: 22px; }
 .switch-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 16px; background: #f2f2eb; border: 1px solid #dedfd8; }
 .switch-row .ant-form-item { margin: 0; }
+.instance-domains-card { margin-top: 26px; border-color: #d5d6cf; background: #fffdf8; }
+.instance-domains-card .ant-card-head { border-bottom-color: #dedfd8; }
+.instance-domains-card .ant-card-head-title .anticon { margin-right: 8px; color: #d46936; }
+.embedded-alert { margin-top: 16px; }
+.embedded-table { margin-top: 16px; border: 1px solid #e1e2dc; }
+.embedded-table .ant-table { background: transparent; }
 
 .overview-grid { display: grid; gap: 20px; }
 .hero-card { border: 0 !important; background: #18201d !important; color: #fff; overflow: hidden; position: relative; }

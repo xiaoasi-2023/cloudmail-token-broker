@@ -118,8 +118,8 @@ class GatewayRepository:
         return _public_domain(row)
 
     def list_domains(self, instance_id: int | None = None) -> list[dict[str, Any]]:
-        sql = """SELECT d.*, i.name AS instance_name FROM mail_domains d
-                 JOIN cloudmail_instances i ON i.id=d.instance_id"""
+        sql = """SELECT d.*, COALESCE(i.name, '未关联实例') AS instance_name FROM mail_domains d
+                 LEFT JOIN cloudmail_instances i ON i.id=d.instance_id"""
         params: tuple[Any, ...] = ()
         if instance_id is not None:
             sql += " WHERE d.instance_id = ?"
