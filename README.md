@@ -1,61 +1,74 @@
-# CloudMail Token Broker
+# Xiaoasi Mail Gateway
 
-CloudMail Token Broker 是一个轻量 Token 中转服务。它统一调用 CloudMail 的 `/api/public/genToken`，在进程内缓存 Token，并向图片站、Kirox、Windows EXE 等客户端提供稳定的获取接口，避免多个项目互相覆盖 CloudMail 全局 Token。
+Xiaoasi Mail Gateway 是一个支持多 CloudMail 实例、多邮箱域名和可视化管理端的统一邮箱网关。
 
-当前默认采用公开调用模式：客户端只需要知道 Broker 地址，不需要为图片站、Kirox、EXE 分别配置密钥。
+图片站、Kirox、Windows EXE 和其他调用方只调用网关的创建邮箱、查询验证码接口，不再保存 CloudMail 管理员账号、密码和 Token，也不需要理解 `genToken`、`addUser`、`emailList` 等内部接口。
 
-## 工作流程
+## 核心能力
+
+- 多个 CloudMail 实例，每个实例配置多个邮箱域名；
+- 每实例独立 Token 缓存和刷新锁，互不覆盖；
+- 支持指定单域名、指定域名范围和自动加权选择；
+- 自动生成邮箱地址和内部密码；
+- 使用 `Idempotency-Key` 避免网络重试重复建箱；
+- 创建邮箱后返回短期、单邮箱范围的 `mailboxToken`；
+- 统一查询 OpenAI、Grok 等验证码；
+- SQLite 持久化实例、域名、邮箱、请求日志和管理会话；
+- CloudMail 管理员密码加密保存；
+- React + Ant Design 管理端；
+- 保留旧 Token Broker 接口供迁移阶段使用；
+- 提供 dry-run/apply 数据保留清理脚本。
+
+## 调用链
 
 ```text
 图片站 / Kirox / EXE
         |
-        | POST /api/public/genToken
+        | POST /v1/mailboxes
         v
-CloudMail Token Broker
+Xiaoasi Mail Gateway
         |
-        | 缓存未到期：直接返回
-        | 缓存到期：只刷新一次
+        | 选择域名及所属实例
+        | 获取该实例独立 Token
+        | 调用 addUser 创建邮箱
         v
-CloudMail /api/public/genToken
+CloudMail 实例 A / B / C
 ```
 
-## 本地配置
+## 快速部署
 
-项目目录已提供 `.env.example`。实际部署使用本地 `.env`，该文件已被 Git 忽略，不会提交到仓库。
+项目默认镜像：
 
-最小配置：
+```text
+registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker:latest
+```
+
+部署目录至少包含：
+
+```text
+cloudmail-token-broker/
+├── docker-compose.yml
+├── .env
+└── data/
+```
+
+上传 `.env` 前必须确认：
 
 ```dotenv
-IMAGE_TAG=latest
+GATEWAY_ENABLED=true
+GATEWAY_DATABASE_PATH=/app/data/xiaoasi-mail.db
 
-CLOUDMAIL_BASE_URL=https://mail.example.com
-CLOUDMAIL_ADMIN_EMAIL=admin@example.com
-CLOUDMAIL_ADMIN_PASSWORD=替换为CloudMail管理员密码
+DATA_ENCRYPTION_KEY=<至少32字节随机值>
+MAILBOX_SESSION_SECRET=<另一条至少32字节随机值>
 
-BROKER_PUBLIC_ACCESS=true
-BROKER_ADMIN_KEY=
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<强管理密码>
+ADMIN_COOKIE_SECURE=true
 ```
 
-其中必须填写：
+本地 `.env` 已被 Git 忽略，不会提交。
 
-- `CLOUDMAIL_BASE_URL`：CloudMail 服务地址，不要带末尾 `/`。
-- `CLOUDMAIL_ADMIN_EMAIL`：用于调用 CloudMail `genToken` 的管理员邮箱。
-- `CLOUDMAIL_ADMIN_PASSWORD`：CloudMail 管理员密码。
-- `BROKER_PUBLIC_ACCESS=true`：业务接口公开调用，不检查 Authorization。
-- `BROKER_ADMIN_KEY=`：留空时关闭 Broker 管理接口。
-
-不需要配置 `BROKER_CLIENT_KEYS_JSON`，也不需要所谓的“图片站密钥”“Kirox 密钥”或“EXE 密钥”。这些原本只是 Broker 自己用于区分调用方的访问密钥，并不是图片站、Kirox 或 CloudMail 已有的密钥。
-
-## 启动
-
-### 本地运行
-
-```powershell
-uv sync --extra test
-uv run uvicorn app.main:create_app --factory --env-file .env --host 127.0.0.1 --port 8788
-```
-
-### Docker Compose
+启动：
 
 ```bash
 docker compose pull
@@ -64,94 +77,158 @@ docker compose ps
 docker compose logs --tail=100 cloudmail-token-broker
 ```
 
-默认镜像：
+通过宝塔网站反向代理：
 
 ```text
-registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker:latest
+https://你的网关域名  →  http://127.0.0.1:8788
 ```
 
-发布流程：提交并推送 GitHub，由阿里云自动构建镜像；服务器只负责拉取并重建容器。
+管理端：
 
-## 客户端调用
-
-### 兼容旧 CloudMail 客户端
-
-只把原来的 `genToken` 地址改成 Broker 地址即可，不传 Authorization：
-
-```http
-POST https://broker.example.com/api/public/genToken
-Content-Type: application/json
-
-{}
+```text
+https://你的网关域名/admin/
 ```
 
-响应：
+详细步骤见 [docs/deployment.md](docs/deployment.md)。
+
+## 创建邮箱
+
+自动选择域名：
+
+```bash
+curl -X POST 'https://mail-api.example.com/v1/mailboxes' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: register-task-123' \
+  -H 'X-Client-Source: image2api' \
+  -d '{"purpose":"openai","prefix":"image2api","source":"image2api"}'
+```
+
+指定单域名：
+
+```json
+{
+  "purpose": "openai",
+  "domain": "mail-a.example.com",
+  "prefix": "kirox"
+}
+```
+
+指定域名范围：
+
+```json
+{
+  "purpose": "openai",
+  "domains": ["mail-a.example.com", "mail-b.example.com"],
+  "prefix": "image2api"
+}
+```
+
+成功响应：
 
 ```json
 {
   "code": 200,
   "data": {
-    "token": "cloudmail-token"
+    "mailboxId": "mbx_example",
+    "address": "image2apiabc123@mail-a.example.com",
+    "domain": "mail-a.example.com",
+    "mailboxToken": "短期邮箱访问凭证",
+    "createdAt": "2026-08-10T08:00:00+00:00",
+    "expiresAt": "2026-08-10T08:30:00+00:00"
   }
 }
 ```
 
-### 标准接口
+## 查询验证码
 
-```http
-POST https://broker.example.com/v1/token
+```bash
+curl -X POST 'https://mail-api.example.com/v1/mailboxes/mbx_example/verification-code' \
+  -H 'Authorization: Mailbox <mailboxToken>' \
+  -H 'Content-Type: application/json' \
+  -d '{"purpose":"openai","waitSeconds":20}'
 ```
 
-响应额外包含 `version` 和 `expiresAt`，便于新版客户端报告失效并刷新。
+`mailboxToken` 只允许访问创建时对应的邮箱，不是图片站或 Kirox 的长期项目密钥。
 
-完整接口见 [docs/api.md](docs/api.md)，宝塔部署见 [docs/deployment.md](docs/deployment.md)。
+完整接口见 [docs/api.md](docs/api.md)。
 
-## 公开模式的含义
+## 管理端
 
-公开模式下：
+管理端提供：
 
-- `/v1/token` 无需认证。
-- `/v1/token/refresh` 无需认证。
-- `/api/public/genToken` 无需认证。
-- 所有调用者共享 Broker 内存缓存和限流计数。
-- 任何知道公网域名的人都可能获取 CloudMail Token。
+- 运行概览；
+- CloudMail 实例新增、编辑、启停、删除和连接测试；
+- 邮箱域名新增、编辑、权重、启停和解除冷却；
+- 邮箱记录；
+- 请求日志；
+- 安全边界和运行参数说明。
 
-因此必须使用 HTTPS，并建议通过宝塔网站、Nginx 或 CDN 设置访问频率限制。如果以后想恢复鉴权，可设置：
+CloudMail 管理员密码保存后不会返回浏览器，管理端接口使用 HttpOnly Cookie 会话。
 
-```dotenv
-BROKER_PUBLIC_ACCESS=false
-BROKER_CLIENT_KEYS_JSON={"image2api":"至少32字符的密钥","kirox":"至少32字符的另一条密钥"}
+## 数据清理
+
+预览：
+
+```bash
+docker exec -w /app cloudmail-token-broker \
+  python scripts/gateway_retention_cleanup.py \
+  --request-log-retention-days 30 \
+  --mailbox-retention-days 30
 ```
 
-这只是可选安全模式，不是当前默认部署方式。
+正式执行：
 
-## 管理接口
+```bash
+docker exec -w /app cloudmail-token-broker \
+  python scripts/gateway_retention_cleanup.py \
+  --request-log-retention-days 30 \
+  --mailbox-retention-days 30 \
+  --apply
+```
 
-`BROKER_ADMIN_KEY` 留空时，以下接口返回 `403 ADMIN_DISABLED`：
+该脚本不会删除 CloudMail 上游邮箱账号；如果 CloudMail 支持删除用户，需要后续在 Provider 层补充上游清理。
 
-- `GET /admin/status`
-- `POST /admin/token/refresh`
+## 本地开发
 
-确实需要管理接口时，再配置一条至少 32 个字符的独立管理密钥，并使用 `Authorization: Bearer <管理密钥>` 调用。管理接口不会返回完整 CloudMail Token、管理员密码或客户端密钥。
+后端：
 
-## 缓存和刷新
+```powershell
+uv sync --extra test
+uv run uvicorn app.main:create_app --factory --env-file .env --host 127.0.0.1 --port 8788
+```
 
-- Broker 首次请求时向 CloudMail 获取 Token。
-- 缓存有效期由 `TOKEN_CACHE_SECONDS` 控制，默认 1500 秒。
-- 到达刷新窗口时只允许一个并发请求访问 CloudMail。
-- `/v1/token/refresh` 是公开接口时可能被滥用，因此默认每分钟仅允许 5 次。
-- Broker 当前为单实例内存缓存，不要同时运行多个副本，否则每个副本仍会分别获取 Token。
+管理端：
 
-## 测试
+```powershell
+cd admin-web
+npm install
+npm run dev
+```
+
+生产构建和测试：
 
 ```powershell
 uv run --locked --extra test pytest
-python -m compileall -q app test
+python -m compileall -q app scripts test
+uv build
+
+cd admin-web
+npm run build
 ```
 
-## 安全提醒
+## 文档
 
-- `.env` 不得提交到 Git。
-- CloudMail 管理员密码不会返回给客户端，也不会写入普通日志。
-- 对公网开放后，Broker 返回的 Token 等同于 CloudMail API 凭据。
-- 如果公开域名被滥用，应立即开启反向代理限流，或切换回可选鉴权模式。
+- [API 接口文档](docs/api.md)
+- [宝塔部署手册](docs/deployment.md)
+- [完整开发方案](docs/xiaoasi-mail-gateway-development-plan.md)
+- [发布流程](docs/release.md)
+
+## 兼容说明
+
+以下旧接口暂时保留：
+
+- `POST /v1/token`
+- `POST /v1/token/refresh`
+- `POST /api/public/genToken`
+
+它们只用于现有项目迁移。图片站、Kirox 和其他调用方全部切换到邮箱网关接口后，应关闭 Token 外发。

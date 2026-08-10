@@ -1,4 +1,4 @@
-# CloudMail Token Broker 发布流程
+# Xiaoasi Mail Gateway 发布流程
 
 本项目使用阿里云容器镜像服务的自动构建能力，不在 GitHub Actions、本地电脑或生产服务器推送镜像。
 

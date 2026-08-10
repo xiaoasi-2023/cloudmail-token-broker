@@ -1,45 +1,82 @@
-# CloudMail Token Broker API 接口文档
+# Xiaoasi Mail Gateway API 接口文档
 
 ## 1. 基本信息
 
-- 协议：HTTPS
+- 生产协议：HTTPS
 - 数据格式：JSON
-- 默认模式：公开调用，不需要 Authorization
-- 示例地址：`https://broker.example.com`
+- 示例地址：`https://mail-api.example.com`
+- 业务创建接口：当前公开，通过 IP 限流保护
+- 邮箱后续操作：使用创建时返回的 `mailboxToken`
+- 管理接口：使用 HttpOnly Cookie 登录会话
 
-接口总览：
+## 2. 接口总览
 
-| 方法 | 路径 | 用途 | 默认鉴权 |
+| 方法 | 路径 | 用途 | 鉴权 |
 | --- | --- | --- | --- |
 | GET | `/healthz` | 健康检查 | 无 |
-| POST | `/v1/token` | 获取当前 Token | 无 |
-| POST | `/v1/token/refresh` | 报告当前 Token 失效并刷新 | 无 |
-| POST | `/api/public/genToken` | 兼容旧 CloudMail 客户端 | 无 |
-| GET | `/admin/status` | 查询缓存状态 | 默认关闭 |
-| POST | `/admin/token/refresh` | 管理员强制刷新 | 默认关闭 |
+| POST | `/v1/mailboxes` | 创建邮箱 | 无，建议 `Idempotency-Key` |
+| GET | `/v1/mailboxes/{id}` | 查询邮箱状态 | `Mailbox` 凭证 |
+| POST | `/v1/mailboxes/{id}/verification-code` | 查询验证码 | `Mailbox` 凭证 |
+| DELETE | `/v1/mailboxes/{id}` | 释放邮箱会话 | `Mailbox` 凭证 |
+| POST | `/admin-api/auth/login` | 管理端登录 | 管理账号密码 |
+| GET | `/admin-api/auth/session` | 查询管理会话 | Cookie，可匿名检查 |
+| POST | `/admin-api/auth/logout` | 管理端退出 | Cookie |
+| GET | `/admin-api/overview` | 管理概览 | Cookie |
+| GET/POST/PATCH/DELETE | `/admin-api/instances` | 实例管理 | Cookie |
+| GET/POST/PATCH/DELETE | `/admin-api/domains` | 域名管理 | Cookie |
+| GET | `/admin-api/mailboxes` | 邮箱记录 | Cookie |
+| GET | `/admin-api/request-logs` | 请求日志 | Cookie |
 
-## 2. 健康检查
+## 3. 创建邮箱
 
 ```http
-GET /healthz
+POST /v1/mailboxes
+Content-Type: application/json
+Idempotency-Key: register-task-123
+X-Client-Source: image2api
 ```
 
-成功响应：
+自动域名：
 
 ```json
 {
-  "ok": true,
-  "service": "cloudmail-token-broker"
+  "purpose": "openai",
+  "prefix": "image2api",
+  "source": "image2api"
 }
 ```
 
-## 3. 获取当前 Token
+指定单域名：
 
-```http
-POST /v1/token
+```json
+{
+  "purpose": "openai",
+  "domain": "mail-a.example.com",
+  "prefix": "kirox",
+  "source": "kirox"
+}
 ```
 
-不需要请求体，不需要 Authorization。
+指定候选域名：
+
+```json
+{
+  "purpose": "grok",
+  "domains": ["mail-a.example.com", "mail-b.example.com"],
+  "prefix": "kirox",
+  "source": "kirox"
+}
+```
+
+规则：
+
+- `domain` 与 `domains` 不能同时传；
+- 指定单域名失败时不切换其他域名；
+- 候选范围和自动模式可以跨 CloudMail 实例失败切换；
+- 同一 `Idempotency-Key` 和相同参数返回原邮箱；
+- 同一幂等键配合不同参数返回 `409 IDEMPOTENCY_CONFLICT`；
+- `Idempotency-Key` 最大 256 个字符；
+- 响应不返回实际 CloudMail 实例和上游 Token。
 
 成功响应：
 
@@ -47,125 +84,121 @@ POST /v1/token
 {
   "code": 200,
   "data": {
-    "token": "cloudmail-token",
-    "version": "a1b2c3d4e5f6",
+    "mailboxId": "mbx_01k2example",
+    "address": "image2apiabc123@mail-a.example.com",
+    "domain": "mail-a.example.com",
+    "mailboxToken": "eyJ...signature",
+    "createdAt": "2026-08-10T08:00:00+00:00",
     "expiresAt": "2026-08-10T08:30:00+00:00"
   }
 }
 ```
 
-字段说明：
+## 4. Mailbox 鉴权
 
-| 字段 | 说明 |
-| --- | --- |
-| `token` | CloudMail 公共 API Token |
-| `version` | Token 的短版本标识，不是 Token 本身 |
-| `expiresAt` | Broker 本地缓存过期时间 |
-
-## 4. 报告失效并刷新
+后续接口请求头：
 
 ```http
-POST /v1/token/refresh
-Content-Type: application/json
-
-{
-  "version": "a1b2c3d4e5f6"
-}
+Authorization: Mailbox <mailboxToken>
 ```
 
-客户端在使用 Token 调用 CloudMail 收到 401 或 403 时，可以把当前 Token 的 `version` 传给该接口。
+凭证规则：
 
-处理规则：
+- 只允许访问对应的一个 `mailboxId`；
+- 到期后返回 `MAILBOX_SESSION_EXPIRED`；
+- 邮箱 A 的凭证不能访问邮箱 B；
+- 不要在客户端普通日志中打印完整值。
 
-- 报告的版本等于 Broker 当前版本：Broker 向 CloudMail 获取新 Token。
-- 报告的版本落后于 Broker 当前版本：直接返回较新的缓存 Token，不重复刷新。
-- 并发刷新由进程内锁合并，避免同一时刻重复访问 CloudMail。
-
-成功响应格式与 `/v1/token` 相同。
-
-该接口在公开模式下也无需认证，因此生产环境必须保留较低的 `REFRESH_RATE_LIMIT_PER_MINUTE`，并建议在宝塔反向代理或 CDN 再增加限流。
-
-## 5. 兼容接口
+## 5. 查询邮箱状态
 
 ```http
-POST /api/public/genToken
-Content-Type: application/json
-
-{}
+GET /v1/mailboxes/{mailboxId}
+Authorization: Mailbox <mailboxToken>
 ```
 
-成功响应：
+响应：
 
 ```json
 {
   "code": 200,
   "data": {
-    "token": "cloudmail-token"
+    "mailboxId": "mbx_01k2example",
+    "address": "image2apiabc123@mail-a.example.com",
+    "domain": "mail-a.example.com",
+    "status": "active",
+    "verificationStatus": "pending",
+    "createdAt": "2026-08-10T08:00:00+00:00",
+    "expiresAt": "2026-08-10T08:30:00+00:00"
   }
 }
 ```
 
-该接口用于让旧项目只修改 `genToken` URL，不必重写原来的 Token 解析逻辑。客户端请求体中即使继续携带原管理员邮箱和密码，Broker 也不会使用这些字段。
+## 6. 查询验证码
 
-## 6. Python 示例
-
-```python
-import requests
-
-
-BROKER_BASE_URL = "https://broker.example.com"
-
-
-def get_token() -> dict:
-    response = requests.post(
-        f"{BROKER_BASE_URL}/v1/token",
-        timeout=15,
-    )
-    response.raise_for_status()
-    return response.json()["data"]
-
-
-def refresh_token(version: str) -> dict:
-    response = requests.post(
-        f"{BROKER_BASE_URL}/v1/token/refresh",
-        json={"version": version},
-        timeout=15,
-    )
-    response.raise_for_status()
-    return response.json()["data"]
+```http
+POST /v1/mailboxes/{mailboxId}/verification-code
+Authorization: Mailbox <mailboxToken>
+Content-Type: application/json
 ```
 
-## 7. JavaScript/TypeScript 示例
-
-```ts
-const brokerBaseUrl = "https://broker.example.com";
-
-export async function getCloudMailToken() {
-  const response = await fetch(`${brokerBaseUrl}/v1/token`, {
-    method: "POST",
-  });
-
-  if (!response.ok) {
-    throw new Error(`Broker 请求失败: HTTP ${response.status}`);
-  }
-
-  const payload = await response.json();
-  return payload.data as {
-    token: string;
-    version: string;
-    expiresAt: string;
-  };
-}
-```
-
-## 8. 错误响应
-
-统一格式：
+请求：
 
 ```json
 {
-  "code": "CLOUDMAIL_TOKEN_FAILED",
-  "message": "CloudMail genToken 请求超时"
+  "purpose": "openai",
+  "waitSeconds": 20,
+  "pollIntervalSeconds": 2
+}
+```
+
+限制：
+
+- `waitSeconds` 范围 0～30 秒；
+- `pollIntervalSeconds` 范围 0.2～10 秒；
+- `purpose` 为空时沿用创建邮箱时的用途；
+- `openai` 默认提取 4～8 位数字验证码；
+- `grok` 支持数字、字母数字及带连字符验证码；
+- 自动过滤邮箱创建时间之前的历史邮件。
+
+收到验证码：
+
+```json
+{
+  "code": 200,
+  "data": {
+    "status": "received",
+    "verificationCode": "123456"
+  }
+}
+```
+
+尚未收到：
+
+```json
+{
+  "code": 200,
+  "data": {
+    "status": "pending",
+    "verificationCode": ""
+  }
+}
+```
+
+## 7. 释放邮箱
+
+```http
+DELETE /v1/mailboxes/{mailboxId}
+Authorization: Mailbox <mailboxToken>
+```
+
+该接口把网关记录标记为 `released`，目前不删除 CloudMail 上游账号。
+
+## 8. 错误格式
+
+```json
+{
+  "code": "NO_AVAILABLE_DOMAIN",
+  "message": "当前没有可用邮箱域名"
 }
 ```
 
@@ -173,50 +206,43 @@ export async function getCloudMailToken() {
 
 | HTTP | code | 说明 |
 | --- | --- | --- |
-| 403 | `ADMIN_DISABLED` | 管理接口未配置管理密钥 |
-| 401 | `BROKER_UNAUTHORIZED` | 仅在可选鉴权模式下出现 |
-| 429 | `RATE_LIMITED` | 超过进程内接口限流 |
-| 502 | `CLOUDMAIL_TOKEN_FAILED` | Broker 获取 CloudMail Token 失败 |
+| 400 | `DOMAIN_SELECTOR_CONFLICT` | 同时传入 `domain` 与 `domains` |
+| 400 | `DOMAIN_NOT_ALLOWED` | 指定域名不在域名池 |
+| 401 | `MAILBOX_TOKEN_INVALID` | 邮箱凭证缺失、格式错误或跨邮箱使用 |
+| 401 | `MAILBOX_SESSION_EXPIRED` | 邮箱会话已过期 |
+| 404 | `MAILBOX_NOT_FOUND` | 邮箱记录不存在 |
+| 409 | `IDEMPOTENCY_CONFLICT` | 幂等键对应不同参数 |
+| 429 | `RATE_LIMITED` | 超过业务接口限流 |
+| 502 | `MAILBOX_CREATE_FAILED` | 上游创建邮箱失败 |
+| 502 | `MAILBOX_QUERY_FAILED` | 上游查询邮件失败 |
+| 503 | `DOMAIN_UNAVAILABLE` | 指定域名当前不可用 |
+| 503 | `NO_AVAILABLE_DOMAIN` | 没有可用域名 |
+| 503 | `INSTANCE_UNAVAILABLE` | 邮箱所属实例不可用 |
 
-## 9. 管理接口
+## 9. 管理端登录
 
-默认配置 `BROKER_ADMIN_KEY=`，因此管理接口关闭。
-
-启用后使用：
-
-```http
-Authorization: Bearer <BROKER_ADMIN_KEY>
-```
-
-### 查询状态
-
-```http
-GET /admin/status
-```
-
-状态响应只包含缓存状态、版本、刷新次数和时间，不返回完整 Token 或 CloudMail 管理员密码。
-
-### 强制刷新
+管理端登录按请求来源进行分钟级限流，默认每分钟最多 10 次，可通过 `ADMIN_LOGIN_RATE_LIMIT_PER_MINUTE` 调整。
 
 ```http
-POST /admin/token/refresh
+POST /admin-api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "管理密码"
+}
 ```
 
-该接口忽略当前版本并立即访问 CloudMail，必须限制调用频率。
+成功后服务端写入 HttpOnly Cookie，前端请求必须使用 `credentials: include`。
 
-## 10. 可选鉴权模式
+管理端 CRUD 请求和响应字段与页面表单一致。实例响应永远不包含管理员密码和 CloudMail Token。
 
-如果以后不想让所有人调用，可以关闭公开模式：
+## 10. 兼容接口
 
-```dotenv
-BROKER_PUBLIC_ACCESS=false
-BROKER_CLIENT_KEYS_JSON={"image2api":"至少32字符的密钥","kirox":"至少32字符的另一条密钥"}
-```
+迁移阶段保留：
 
-此时业务接口要求：
+- `POST /v1/token`
+- `POST /v1/token/refresh`
+- `POST /api/public/genToken`
 
-```http
-Authorization: Bearer <对应客户端密钥>
-```
-
-当前部署不需要使用此模式。
+只有配置旧的 `CLOUDMAIL_BASE_URL`、`CLOUDMAIL_ADMIN_EMAIL` 和 `CLOUDMAIL_ADMIN_PASSWORD` 后才可使用；没有配置时返回 `LEGACY_BROKER_DISABLED`。

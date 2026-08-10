@@ -21,7 +21,7 @@ class CloudMailClient:
                 "headers": {
                     "Accept": "application/json",
                     "Content-Type": "application/json",
-                    "User-Agent": "cloudmail-token-broker/0.1.0",
+                    "User-Agent": "xiaoasi-mail-gateway/0.2.0",
                 },
             }
             if settings.cloudmail_proxy:

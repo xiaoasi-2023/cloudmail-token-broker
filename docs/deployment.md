@@ -1,64 +1,76 @@
-# CloudMail Token Broker 宝塔部署手册
+# Xiaoasi Mail Gateway 宝塔部署手册
 
-## 1. 部署文件
-
-在服务器创建目录：
+## 1. 准备目录
 
 ```bash
-mkdir -p /www/docker/cloudmail-token-broker
+mkdir -p /www/docker/cloudmail-token-broker/data
 cd /www/docker/cloudmail-token-broker
 ```
 
-把本地项目中的两个文件上传到该目录：
+上传：
 
 - `docker-compose.yml`
 - `.env`
 
-最终结构：
+目录：
 
 ```text
 /www/docker/cloudmail-token-broker/
 ├── docker-compose.yml
-└── .env
+├── .env
+└── data/
 ```
 
-无需把完整源码上传服务器。GitHub 推送后由阿里云自动构建镜像，宝塔只拉取镜像。
+镜像由 GitHub 推送触发阿里云自动构建，服务器无需上传源码。
 
-## 2. 填写 `.env`
+## 2. 环境变量
 
-上传前必须替换以下三项：
-
-```dotenv
-CLOUDMAIL_BASE_URL=https://你的CloudMail域名
-CLOUDMAIL_ADMIN_EMAIL=你的CloudMail管理员邮箱
-CLOUDMAIL_ADMIN_PASSWORD=你的CloudMail管理员密码
-```
-
-公开调用配置保持：
-
-```dotenv
-BROKER_PUBLIC_ACCESS=true
-BROKER_ADMIN_KEY=
-```
-
-这表示图片站、Kirox、EXE 等客户端调用时不需要 Authorization，也不需要分别生成项目密钥。
-
-其余推荐值：
+### 2.1 网关配置
 
 ```dotenv
 IMAGE_TAG=latest
-TOKEN_CACHE_SECONDS=1500
-TOKEN_REFRESH_SKEW_SECONDS=120
-REQUEST_TIMEOUT_SECONDS=15
-CLOUDMAIL_VERIFY_TLS=true
-CLOUDMAIL_PROXY=
-TOKEN_RATE_LIMIT_PER_MINUTE=600
-REFRESH_RATE_LIMIT_PER_MINUTE=5
-ADMIN_RATE_LIMIT_PER_MINUTE=2
-LOG_LEVEL=INFO
+
+GATEWAY_ENABLED=true
+GATEWAY_DATABASE_PATH=/app/data/xiaoasi-mail.db
+
+DATA_ENCRYPTION_KEY=<至少32字节随机值>
+MAILBOX_SESSION_SECRET=<另一条至少32字节随机值>
+MAILBOX_SESSION_TTL_SECONDS=1800
+
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<强管理密码>
+ADMIN_PASSWORD_HASH=
+ADMIN_SESSION_TTL_SECONDS=28800
+ADMIN_COOKIE_SECURE=true
+ADMIN_LOGIN_RATE_LIMIT_PER_MINUTE=10
+
+MAILBOX_CREATE_RATE_LIMIT_PER_MINUTE=120
+MAILBOX_POLL_RATE_LIMIT_PER_MINUTE=600
 ```
 
-## 3. 在宝塔创建容器编排
+`DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 必须不同，且不能在部署后随意修改：
+
+- 修改数据加密密钥后，数据库内已保存的 CloudMail 管理员密码无法解密；
+- 修改邮箱会话密钥后，已签发的 `mailboxToken` 全部失效。
+
+本地项目的 `.env` 已生成随机值，但上传前仍应确认管理员密码和 CloudMail 兼容配置。
+
+### 2.2 旧 Token Broker 兼容配置
+
+迁移阶段如仍有旧客户端，可保留：
+
+```dotenv
+CLOUDMAIL_BASE_URL=https://旧的CloudMail地址
+CLOUDMAIL_ADMIN_EMAIL=管理员邮箱
+CLOUDMAIL_ADMIN_PASSWORD=管理员密码
+BROKER_PUBLIC_ACCESS=true
+```
+
+新网关实例和域名不通过这些变量维护，而是在 `/admin/` 页面新增。
+
+没有旧客户端时应保持这三个 CloudMail 兼容变量为空。旧 Token Broker 和新网关若同时操作同一个仍采用全局动态 Token 的 CloudMail 实例，可能互相触发 Token 失效，因此兼容配置只用于短期迁移。
+
+## 3. 宝塔容器编排
 
 进入：
 
@@ -68,147 +80,186 @@ LOG_LEVEL=INFO
 
 建议：
 
-- 编排名称：`cloudmail-token-broker`
-- 编排目录：`/www/docker/cloudmail-token-broker`
-- Compose 内容直接使用上传的 `docker-compose.yml`
+- 名称：`cloudmail-token-broker`
+- 目录：`/www/docker/cloudmail-token-broker`
+- Compose：使用项目中的 `docker-compose.yml`
 
-当前端口映射是：
+容器启动脚本会自动调整 `/app/data` 权限，然后以非 root 用户运行应用。
 
-```yaml
-ports:
-  - "127.0.0.1:8788:8080"
-```
-
-它只允许服务器本机访问 8788，外部程序通过宝塔网站反向代理和 HTTPS 域名访问，不直接暴露容器端口。
-
-## 4. 配置公网 HTTPS 域名
-
-在宝塔中新建网站，例如：
-
-```text
-broker.example.com
-```
-
-反向代理目标：
-
-```text
-http://127.0.0.1:8788
-```
-
-然后申请并启用 SSL，强制 HTTPS。
-
-建议在反向代理或 CDN 上增加频率限制，尤其是：
-
-- `POST /v1/token/refresh`
-- `POST /api/public/genToken`
-
-公开模式意味着任何知道域名的人都能请求 Token，公网限流是必要保护。
-
-## 5. 启动与更新
-
-首次启动：
+启动：
 
 ```bash
 cd /www/docker/cloudmail-token-broker
 docker compose pull
 docker compose up -d --force-recreate
 docker compose ps
-```
-
-GitHub 推送并等待阿里云构建成功后，在服务器更新：
-
-```bash
-cd /www/docker/cloudmail-token-broker
-docker compose pull
-docker compose up -d --force-recreate
-docker image prune -f
-```
-
-查看日志：
-
-```bash
 docker compose logs --tail=100 cloudmail-token-broker
 ```
 
-## 6. 验证
+## 4. 配置 HTTPS 网站
 
-服务器本机健康检查：
+宝塔新建网站，例如：
+
+```text
+mail-api.example.com
+```
+
+反向代理：
+
+```text
+http://127.0.0.1:8788
+```
+
+启用 SSL 并强制 HTTPS。不要直接把 8788 开放到公网。
+
+管理端：
+
+```text
+https://mail-api.example.com/admin/
+```
+
+建议给 `/admin/` 和 `/admin-api/` 再增加宝塔访问限制、Cloudflare Access 或固定来源 IP。
+
+## 5. 首次配置
+
+1. 使用 `.env` 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录管理端。
+2. 进入“CloudMail 实例”，新增第一个实例。
+3. 填写 API 地址、管理员邮箱、管理员密码、代理和 TLS 设置。
+4. 点击“测试”，确认 `genToken` 成功。
+5. 进入“邮箱域名”，为该实例添加一个或多个域名。
+6. 设置启用状态和调度权重。
+7. 使用 `/v1/mailboxes` 测试创建邮箱。
+8. 触发测试邮件后验证验证码查询。
+
+不同 CloudMail 实例分别新增，每个实例可以维护多个域名。
+
+## 6. 验证命令
+
+健康检查：
 
 ```bash
 curl -fsS http://127.0.0.1:8788/healthz
 ```
 
-预期：
-
-```json
-{"ok":true,"service":"cloudmail-token-broker"}
-```
-
-测试兼容接口：
+创建邮箱：
 
 ```bash
-curl -sS -X POST \
+curl -sS -X POST 'https://mail-api.example.com/v1/mailboxes' \
   -H 'Content-Type: application/json' \
-  -d '{}' \
-  https://broker.example.com/api/public/genToken
+  -H 'Idempotency-Key: deploy-test-001' \
+  -H 'X-Client-Source: deploy-test' \
+  -d '{"purpose":"openai","prefix":"deploytest","source":"deploy-test"}'
 ```
 
-测试标准接口：
+保存返回的 `mailboxId` 和 `mailboxToken`，再查询状态或验证码。
+
+## 7. 更新镜像
+
+阿里云自动构建完成后：
 
 ```bash
-curl -sS -X POST https://broker.example.com/v1/token
+cd /www/docker/cloudmail-token-broker
+docker compose pull
+docker compose up -d --force-recreate
+docker compose ps
+docker compose logs --tail=100 cloudmail-token-broker
 ```
 
-两个接口均不需要 Authorization。
-
-## 7. 客户端接入
-
-旧项目原来调用：
+SQLite 数据位于宿主机：
 
 ```text
-https://cloudmail.example.com/api/public/genToken
+/www/docker/cloudmail-token-broker/data/xiaoasi-mail.db
 ```
 
-改成：
+重建容器不会删除该文件。
 
-```text
-https://broker.example.com/api/public/genToken
+## 8. 备份
+
+升级前备份：
+
+```bash
+cd /www/docker/cloudmail-token-broker
+cp -a data "data-backup-$(date +%Y%m%d-%H%M%S)"
+cp -a .env ".env.backup-$(date +%Y%m%d-%H%M%S)"
 ```
 
-请求体可以继续传原来的邮箱和密码，也可以传 `{}`；Broker 不读取客户端传来的管理员账号密码，而是使用服务器 `.env` 中的 CloudMail 管理员凭据。
+`.env` 中的数据加密密钥必须与数据库备份一起保留，否则恢复数据库后无法解密实例密码。
 
-## 8. 管理接口
+## 9. 数据清理定时任务
 
-当前 `.env` 中：
+先执行 dry-run：
+
+```bash
+docker exec -w /app cloudmail-token-broker \
+  python scripts/gateway_retention_cleanup.py \
+  --request-log-retention-days 30 \
+  --mailbox-retention-days 30
+```
+
+确认数量后正式执行：
+
+```bash
+docker exec -w /app cloudmail-token-broker \
+  python scripts/gateway_retention_cleanup.py \
+  --request-log-retention-days 30 \
+  --mailbox-retention-days 30 \
+  --apply
+```
+
+宝塔计划任务建议每天凌晨执行一次正式命令。脚本会输出中文摘要。
+
+清理范围：
+
+- 过期幂等记录；
+- 过期管理会话；
+- 将过期 active 邮箱标记为 expired；
+- 超过保留期的请求日志；
+- 超过保留期且已 released、expired 或 failed 的邮箱记录。
+
+不会删除：
+
+- 未过期 active 邮箱；
+- CloudMail 上游邮箱账号；
+- CloudMail 实例和域名配置。
+
+## 10. 常见问题
+
+### 容器提示网关密钥配置错误
+
+确认 `DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 已替换占位符且至少 32 字节。
+
+### 管理端登录后立即返回登录页
+
+生产 HTTPS 应设置：
 
 ```dotenv
-BROKER_ADMIN_KEY=
+ADMIN_COOKIE_SECURE=true
 ```
 
-表示管理接口关闭。若以后确实要使用 `/admin/status` 和 `/admin/token/refresh`，填写至少 32 个字符的随机密钥并重建容器即可。
+如果只在本机 HTTP 测试，可临时设置为 `false`。
 
-## 9. 常见问题
+### 数据库无法写入
 
-### 容器启动失败并提示缺少环境变量
+检查宿主机 `data/` 目录和容器日志。镜像入口会自动把挂载目录调整为应用用户可写。
 
-检查 `.env` 中以下三项是否仍是占位符或为空：
+### 实例测试失败
 
-- `CLOUDMAIL_BASE_URL`
-- `CLOUDMAIL_ADMIN_EMAIL`
-- `CLOUDMAIL_ADMIN_PASSWORD`
+检查：
 
-### Token 接口返回 502
+- CloudMail API 地址；
+- 管理员邮箱和密码；
+- 容器到 CloudMail 的网络；
+- `proxy_url`；
+- TLS 证书设置。
 
-检查 Broker 容器能否访问 CloudMail 域名，CloudMail 管理员账号密码是否正确，以及 `CLOUDMAIL_VERIFY_TLS` 是否符合证书情况。
+### 自动模式提示没有可用域名
 
-### 公网访问失败
+确认至少存在一个：
 
-检查宝塔网站反向代理是否指向 `http://127.0.0.1:8788`，SSL 证书和防火墙规则是否正确。无需把 8788 直接开放到公网。
+- 已启用的 CloudMail 实例；
+- 已启用的邮箱域名；
+- 不处于异常或冷却状态的域名。
 
-### 多次请求是否会一直生成新 Token
+### 能否运行多个网关副本
 
-不会。正常获取接口共享内存缓存。只有缓存进入刷新窗口、明确调用刷新接口或容器重启后首次请求时，才会访问 CloudMail。
-
-### 能否运行多个容器副本
-
-当前不建议。缓存和刷新锁都在单个进程内，多副本会各自获取 Token。部署时保持一个 Broker 容器。
+当前版本使用 SQLite、进程内 Token 缓存和进程内并发锁，只支持单容器副本。不要设置多 worker 或多副本。

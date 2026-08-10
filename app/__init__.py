@@ -1,1 +1,1 @@
-"""CloudMail Token Broker application package."""
+"""Xiaoasi Mail Gateway application package."""

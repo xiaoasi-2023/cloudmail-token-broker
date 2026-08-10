@@ -8,3 +8,8 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+.playwright-cli/
+output/
+admin-web/node_modules/
+admin-web/dist/
+admin-web/*.tsbuildinfo
