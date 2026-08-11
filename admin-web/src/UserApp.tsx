@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiOutlined,
   CheckCircleOutlined,
@@ -40,6 +40,7 @@ import {
   Tag,
   Typography,
 } from "antd";
+import type { InputRef } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { UserApiError, userApi } from "./userApi";
@@ -114,6 +115,7 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [registrationEnabled, setRegistrationEnabled] = useState(false);
   const [registerForm] = Form.useForm<{ username: string; email: string; code: string; password: string; confirm: string }>();
+  const registerEmailInputRef = useRef<InputRef>(null);
 
   useEffect(() => {
     void userApi.registrationConfig()
@@ -142,7 +144,10 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
 
   const sendRegisterCode = async () => {
     try {
-      const { email } = await registerForm.validateFields(["email"]);
+      // 浏览器或密码管理器自动填充时，DOM 已有值但 Ant Design 表单状态可能仍为空。
+      const email = String(registerEmailInputRef.current?.input?.value || registerForm.getFieldValue("email") || "").trim();
+      registerForm.setFieldValue("email", email);
+      await registerForm.validateFields(["email"]);
       setSendingCode(true);
       const result = await userApi.sendRegisterCode(email);
       setCountdown(Number(result.cooldown_seconds || 60));
@@ -205,7 +210,7 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
                 <Input autoComplete="username" placeholder="例如 xiaoasi" prefix={<UserOutlined />} />
               </Form.Item>
               <Form.Item label="注册邮箱" name="email" rules={[{ required: true, message: "请输入注册邮箱" }, { type: "email", message: "请输入有效的邮箱地址" }]}>
-                <Input autoComplete="email" placeholder="用于接收验证码" prefix={<MailOutlined />} />
+                <Input ref={registerEmailInputRef} autoComplete="email" placeholder="用于接收验证码" prefix={<MailOutlined />} />
               </Form.Item>
               <Form.Item className="register-code-field" label="邮箱验证码" required>
                 <Space.Compact block>

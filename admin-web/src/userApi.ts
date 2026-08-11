@@ -81,7 +81,7 @@ export const userApi = {
   registrationConfig: async () => unwrap(await request<ApiEnvelope<{ enabled: boolean; code_ttl_seconds: number; code_cooldown_seconds: number }> | { enabled: boolean; code_ttl_seconds: number; code_cooldown_seconds: number }>("/auth/registration-config", { cache: "no-store" })),
   sendRegisterCode: async (email: string) => unwrap(await request<ApiEnvelope<{ ttl_seconds: number; cooldown_seconds: number }> | { ttl_seconds: number; cooldown_seconds: number }>("/auth/register-code", {
     method: "POST",
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email: String(email || "").trim() }),
   })),
   register: async (username: string, email: string, password: string, code: string) => unwrap(await request<ApiEnvelope<UserProfile> | UserProfile>("/auth/register", {
     method: "POST",
