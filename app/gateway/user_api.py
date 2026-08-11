@@ -20,6 +20,7 @@ class UserApiContext:
     cookie_secure: bool = True
     registration_enabled: bool = False
     registration: UserRegistrationService | None = None
+    pop3_public_host: str = "pop.cloudmail.xiaoasi.xyz"
 
 
 class UserLoginRequest(BaseModel):
@@ -82,6 +83,20 @@ def create_user_router(context: UserApiContext) -> APIRouter:
 
     def not_found(resource: str) -> HTTPException:
         return HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": f"{resource}不存在"})
+
+    def auth_code_data(user_id: int) -> dict[str, Any]:
+        data = context.users.get_user_pop_auth_code(user_id)
+        mailboxes = context.users.list_user_mailboxes(
+            user_id,
+            limit=500,
+            status="active",
+        )
+        return {
+            **data,
+            "pop_host": context.pop3_public_host,
+            "pop_port": 110,
+            "mailboxes": [str(item["address"]) for item in mailboxes if item.get("address")],
+        }
 
     @router.post("/auth/login")
     async def login(body: UserLoginRequest, response: Response):
@@ -176,12 +191,23 @@ def create_user_router(context: UserApiContext) -> APIRouter:
             raise not_found("调用密钥")
         return {"ok": True}
 
+    @router.post("/api-keys/{key_id}/regenerate")
+    async def regenerate_api_key(key_id: int, user: dict[str, Any] = Depends(current_user)):
+        item = context.users.regenerate_api_key(user["id"], key_id)
+        if item is None:
+            raise not_found("调用密钥")
+        return {"ok": True, "data": item}
+
     @router.put("/auth-code")
     async def set_auth_code(body: UserAuthCodeRequest, user: dict[str, Any] = Depends(current_user)):
         item = context.users.set_user_auth_code(user["id"], body.auth_code)
         if item is None:
             raise HTTPException(status_code=400, detail={"code": "AUTH_CODE_SET_FAILED", "message": context.users.error})
-        return {"ok": True, "data": {"configured": True, "user_auth_code": body.auth_code}}
+        return {"ok": True, "data": auth_code_data(user["id"])}
+
+    @router.get("/auth-code")
+    async def get_auth_code(user: dict[str, Any] = Depends(current_user)):
+        return {"ok": True, "data": auth_code_data(user["id"])}
 
     @router.get("/credits")
     async def credits(

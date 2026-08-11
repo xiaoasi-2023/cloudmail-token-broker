@@ -86,6 +86,9 @@ button, input, textarea { font: inherit; }
 .primary-cell { min-width: 145px; }
 .primary-cell b { display: block; color: #252c29; font-weight: 600; }
 .primary-cell span { display: block; color: #828985; font-size: 12px; margin-top: 3px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.api-key-display { min-width: 320px; }
+.api-key-display .ant-typography { max-width: 100%; margin: 0; word-break: break-all; }
+.api-key-display > span { display: block; margin-top: 5px; color: #818985; font-size: 12px; }
 .success-text { color: #39755f; font-weight: 600; }
 .error-text { color: #b84a43; font-weight: 600; }
 .form-alert { margin-bottom: 22px; }
@@ -291,22 +294,19 @@ button, input, textarea { font: inherit; }
 .auth-connection-info { margin-top: 28px; }
 .user-secret-card .ant-descriptions-item-label { color: #9caea3; }
 .user-secret-card .ant-descriptions-item-content { color: #edf3ee; }
+.user-secret-card .connection-code { max-width: 100%; color: #d7f0df; background: #25382f; border-color: #425d4d; word-break: break-all; }
+.connection-mailbox-select { min-width: 260px; max-width: 100%; }
+.connection-mailbox-select .ant-select-selector { color: #edf3ee !important; background: #22352b !important; border-color: #486351 !important; }
+.connection-mailbox-select .ant-select-selection-item { color: #edf3ee !important; }
+.user-secret-card .connection-copy-button { color: #a7d3b7; }
+.user-secret-card .connection-copy-button:hover { color: #d7f0df !important; background: #2c4437 !important; }
+.connection-placeholder { color: #94a49a; }
 .auth-code-auto-panel { display: flex; align-items: flex-start; gap: 14px; margin: 22px 0; padding: 20px; border: 1px solid #ddd9c8; background: #f4f2e8; }
 .auth-code-auto-panel > .anticon { width: 42px; height: 42px; flex: 0 0 auto; display: grid; place-items: center; color: #fff; background: #39755f; font-size: 19px; }
 .auth-code-auto-panel b, .auth-code-auto-panel small { display: block; }
 .auth-code-auto-panel small { margin-top: 6px; color: #747c78; line-height: 1.6; }
 .user-auth-action-card .ant-btn-primary { min-width: 190px; height: 44px; }
-.user-credit-hero { min-height: 190px; padding: 34px 38px; display: flex; align-items: center; justify-content: space-between; gap: 28px; margin-bottom: 20px; color: #fff; background: #18221d; border: 1px solid #26372d; }
-.user-credit-hero h2 { color: #f3f3ec; margin: 10px 0 6px; }
-.user-credit-hero p.ant-typography { max-width: 660px; color: #b8c7bd !important; }
-.user-credit-hero .ant-statistic { min-width: 180px; padding: 18px 24px; text-align: right; border-left: 1px solid #415448; }
-.user-credit-hero .ant-statistic-content { color: #a7d3b7; font: 600 36px "IBM Plex Mono", monospace; }
-.user-credit-hero .ant-statistic-content-suffix { font: 500 14px "IBM Plex Sans", sans-serif; }
 .user-security-grid .ant-divider { border-color: #dedfd8; }
-.one-time-secret { display: flex; align-items: center; gap: 8px; margin-top: 20px; padding: 14px; overflow: auto; background: #f4f2e8; border: 1px solid #ddd9c8; }
-.one-time-secret .ant-typography { margin: 0; color: #28312c; word-break: break-all; }
-.one-time-secret .ant-btn { flex: 0 0 auto; }
-
 @media (max-width: 900px) {
   .user-login-shell { grid-template-columns: 1fr; }
   .user-login-shell.is-register { grid-template-columns: 1fr; }
@@ -327,8 +327,6 @@ button, input, textarea { font: inherit; }
   .user-welcome-card .ant-card-body { display: block; padding: 28px; }
   .user-welcome-card h2 { font-size: 28px; }
   .user-welcome-badge { margin-top: 25px; }
-  .user-credit-hero { display: block; padding: 28px; }
-  .user-credit-hero .ant-statistic { margin-top: 22px; padding: 18px 0 0; text-align: left; border-left: 0; border-top: 1px solid #415448; }
   .preflight-item { grid-template-columns: 28px 22px 1fr; gap: 8px; }
   .preflight-item .ant-btn { grid-column: 3; justify-self: start; padding-left: 0; }
   .user-aside-foot { font-size: 9px; }

@@ -21,7 +21,6 @@ from app.gateway.gateway_schemas import (
     VerificationCodeRequest,
 )
 from app.gateway.mailbox_token import MailboxTokenSigner
-from app.gateway.user_repository import get_authenticated_user_id
 from app.gateway.verification import extract_verification_code
 
 
@@ -53,7 +52,7 @@ class MailboxGatewayService:
         client_name: str = "",
         user_id: int | None = None,
     ) -> MailboxData:
-        owner_user_id = user_id if user_id is not None else get_authenticated_user_id()
+        owner_user_id = user_id
         if owner_user_id is not None:
             owner_user_id = int(owner_user_id)
         if owner_user_id is not None and idempotency_key:
@@ -197,12 +196,13 @@ class MailboxGatewayService:
         token: str,
         request: VerificationCodeRequest,
         client_name: str = "",
+        user_id: int | None = None,
     ) -> VerificationCodeData:
         self.token_signer.verify(token, mailbox_id)
         mailbox = self.store.get_mailbox(mailbox_id)
         if mailbox is None:
             raise GatewayBusinessError("MAILBOX_NOT_FOUND", "邮箱记录不存在", 404)
-        self._verify_client(mailbox, client_name)
+        self._verify_client(mailbox, client_name, user_id)
         if mailbox.status != "active" or mailbox.expires_at <= datetime.now(UTC):
             raise GatewayBusinessError("MAILBOX_SESSION_EXPIRED", "邮箱会话已过期", 401)
         instance = self.store.get_instance(mailbox.instance_id)
@@ -231,12 +231,18 @@ class MailboxGatewayService:
                 return VerificationCodeData(status="pending", verificationCode="")
             await asyncio.sleep(min(request.poll_interval_seconds, max(0, deadline - time.monotonic())))
 
-    def get_mailbox_status(self, mailbox_id: str, token: str, client_name: str = "") -> MailboxStatusData:
+    def get_mailbox_status(
+        self,
+        mailbox_id: str,
+        token: str,
+        client_name: str = "",
+        user_id: int | None = None,
+    ) -> MailboxStatusData:
         self.token_signer.verify(token, mailbox_id)
         mailbox = self.store.get_mailbox(mailbox_id)
         if mailbox is None:
             raise GatewayBusinessError("MAILBOX_NOT_FOUND", "邮箱记录不存在", 404)
-        self._verify_client(mailbox, client_name)
+        self._verify_client(mailbox, client_name, user_id)
         status = mailbox.status
         if status == "active" and mailbox.expires_at <= datetime.now(UTC):
             status = "expired"
@@ -251,12 +257,18 @@ class MailboxGatewayService:
             expiresAt=mailbox.expires_at.isoformat(),
         )
 
-    def release_mailbox(self, mailbox_id: str, token: str, client_name: str = "") -> MailboxStatusData:
+    def release_mailbox(
+        self,
+        mailbox_id: str,
+        token: str,
+        client_name: str = "",
+        user_id: int | None = None,
+    ) -> MailboxStatusData:
         self.token_signer.verify(token, mailbox_id)
         mailbox = self.store.get_mailbox(mailbox_id)
         if mailbox is None:
             raise GatewayBusinessError("MAILBOX_NOT_FOUND", "邮箱记录不存在", 404)
-        self._verify_client(mailbox, client_name)
+        self._verify_client(mailbox, client_name, user_id)
         self.store.set_mailbox_status(mailbox.id, "released")
         mailbox.status = "released"
         return MailboxStatusData(
@@ -281,15 +293,10 @@ class MailboxGatewayService:
         )
 
     @staticmethod
-    def _verify_client(mailbox: MailboxRecord, client_name: str) -> None:
+    def _verify_client(mailbox: MailboxRecord, client_name: str, user_id: int | None) -> None:
         if client_name and mailbox.source != client_name:
             raise GatewayBusinessError("MAILBOX_ACCESS_DENIED", "当前调用密钥无权访问该邮箱", 403)
-        authenticated_user_id = get_authenticated_user_id()
-        if (
-            mailbox.owner_user_id is not None
-            and authenticated_user_id is not None
-            and mailbox.owner_user_id != authenticated_user_id
-        ):
+        if mailbox.owner_user_id is not None and mailbox.owner_user_id != user_id:
             raise GatewayBusinessError("MAILBOX_ACCESS_DENIED", "当前用户无权访问该邮箱", 403)
 
 

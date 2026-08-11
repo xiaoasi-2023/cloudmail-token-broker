@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -19,24 +18,15 @@ def hash_api_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-_authenticated_user_id: ContextVar[int | None] = ContextVar(
-    "gateway_authenticated_user_id",
-    default=None,
-)
-
-
-def get_authenticated_user_id() -> int | None:
-    return _authenticated_user_id.get()
-
-
 def _public_user(row: Any) -> dict[str, Any]:
     item = dict(row)
     item.pop("password_hash", None)
+    item.pop("user_auth_code", None)
     item.pop("user_auth_code_hash", None)
     item.pop("admin_pop_auth_code_hash", None)
     item.pop("admin_pop_auth_code", None)
     item["pop_enabled"] = bool(item["pop_enabled"])
-    item["has_user_auth_code"] = bool(row["user_auth_code_hash"])
+    item["has_user_auth_code"] = bool(row["user_auth_code"] or row["user_auth_code_hash"])
     item["has_admin_pop_auth_code"] = bool(
         row["admin_pop_auth_code"] or row["admin_pop_auth_code_hash"]
     )
@@ -54,10 +44,13 @@ def _public_api_key(row: Any, *, plaintext: str = "") -> dict[str, Any]:
         "created_at": row["created_at"],
         "revoked_at": row["revoked_at"],
     }
-    if plaintext:
-        item["api_key"] = plaintext
+    stored_plaintext = plaintext or str(row.get("api_key") or "")
+    if stored_plaintext:
+        item["api_key"] = stored_plaintext
+        item["legacy_hash_only"] = False
     else:
         item["masked_key"] = f"{row['key_prefix']}..."
+        item["legacy_hash_only"] = True
     return item
 
 
@@ -285,10 +278,9 @@ class UserRepository:
         return _public_user(row)
 
     def set_user_auth_code(self, user_id: int, auth_code: str) -> dict[str, Any] | None:
-        try:
-            auth_code_hash = hash_admin_password(auth_code)
-        except ValueError as exc:
-            self.error = str(exc)
+        normalized_auth_code = str(auth_code or "").strip()
+        if len(normalized_auth_code) < 10:
+            self.error = "授权码长度不能少于 10 个字符"
             return None
         with self.database.transaction() as connection:
             row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
@@ -296,9 +288,10 @@ class UserRepository:
                 self.error = "用户不存在"
                 return None
             connection.execute(
-                """UPDATE users SET user_auth_code_hash=?, user_auth_code_updated_at=?,
+                """UPDATE users SET user_auth_code=?, user_auth_code_hash=NULL,
+                user_auth_code_updated_at=?,
                 pop_failed_attempts=0, pop_locked_until=NULL, updated_at=? WHERE id=?""",
-                (auth_code_hash, utc_now(), utc_now(), user_id),
+                (normalized_auth_code, utc_now(), utc_now(), user_id),
             )
             row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         return _public_user(row)
@@ -309,12 +302,35 @@ class UserRepository:
             if row is None or row["role"] != "user":
                 return None
             connection.execute(
-                """UPDATE users SET user_auth_code_hash=NULL, user_auth_code_updated_at=NULL,
+                """UPDATE users SET user_auth_code=NULL, user_auth_code_hash=NULL,
+                user_auth_code_updated_at=NULL,
                 pop_failed_attempts=0, pop_locked_until=NULL, updated_at=? WHERE id=?""",
                 (utc_now(), user_id),
             )
             row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         return _public_user(row)
+
+    def get_user_pop_auth_code(self, user_id: int) -> dict[str, Any]:
+        with self.database.read() as connection:
+            row = connection.execute(
+                """SELECT user_auth_code, user_auth_code_hash, user_auth_code_updated_at
+                FROM users WHERE id=? AND role='user' LIMIT 1""",
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return {
+                "configured": False,
+                "user_auth_code": "",
+                "legacy_hash_only": False,
+                "updated_at": None,
+            }
+        plaintext = str(row["user_auth_code"] or "")
+        return {
+            "configured": bool(plaintext or row["user_auth_code_hash"]),
+            "user_auth_code": plaintext,
+            "legacy_hash_only": bool(not plaintext and row["user_auth_code_hash"]),
+            "updated_at": row["user_auth_code_updated_at"],
+        }
 
     def set_admin_pop_auth_code(self, auth_code: str) -> dict[str, Any] | None:
         normalized_auth_code = str(auth_code or "").strip()
@@ -364,7 +380,11 @@ class UserRepository:
         locked_until = _parse_datetime(row["pop_locked_until"])
         if locked_until and locked_until > now:
             return False
-        if row["user_auth_code_hash"] and verify_admin_password(auth_code, row["user_auth_code_hash"]):
+        plaintext = str(row["user_auth_code"] or "")
+        valid = bool(plaintext and hmac.compare_digest(str(auth_code or ""), plaintext))
+        if not valid and row["user_auth_code_hash"]:
+            valid = verify_admin_password(auth_code, row["user_auth_code_hash"])
+        if valid:
             with self.database.transaction() as connection:
                 connection.execute(
                     """UPDATE users SET pop_failed_attempts=0, pop_locked_until=NULL,
@@ -409,9 +429,9 @@ class UserRepository:
                 raise ValueError("用户不可用")
             inserted = connection.execute(
                 """INSERT INTO user_api_keys
-                (user_id, name, key_prefix, key_hash, enabled, created_at)
-                VALUES (?, ?, ?, ?, 1, ?) RETURNING id""",
-                (user_id, name.strip(), api_key[:12], hash_api_key(api_key), current),
+                (user_id, name, key_prefix, key_hash, api_key, enabled, created_at)
+                VALUES (?, ?, ?, ?, ?, 1, ?) RETURNING id""",
+                (user_id, name.strip(), api_key[:12], hash_api_key(api_key), api_key, current),
             )
             key_id = int(inserted.fetchone()["id"])
             row = connection.execute("SELECT * FROM user_api_keys WHERE id=?", (key_id,)).fetchone()
@@ -420,11 +440,29 @@ class UserRepository:
     def list_api_keys(self, user_id: int) -> list[dict[str, Any]]:
         with self.database.read() as connection:
             rows = connection.execute(
-                """SELECT id, user_id, name, key_prefix, enabled, last_used_at, created_at, revoked_at
+                """SELECT id, user_id, name, key_prefix, api_key, enabled,
+                last_used_at, created_at, revoked_at
                 FROM user_api_keys WHERE user_id=? ORDER BY id DESC""",
                 (user_id,),
             ).fetchall()
         return [_public_api_key(row) for row in rows]
+
+    def regenerate_api_key(self, user_id: int, key_id: int) -> dict[str, Any] | None:
+        api_key = "xmk_" + secrets.token_urlsafe(32)
+        with self.database.transaction() as connection:
+            result = connection.execute(
+                """UPDATE user_api_keys SET key_prefix=?, key_hash=?, api_key=?, enabled=1,
+                last_used_at=NULL, revoked_at=NULL
+                WHERE id=? AND user_id=? AND revoked_at IS NULL""",
+                (api_key[:12], hash_api_key(api_key), api_key, key_id, user_id),
+            )
+            if result.rowcount != 1:
+                return None
+            row = connection.execute(
+                "SELECT * FROM user_api_keys WHERE id=? AND user_id=?",
+                (key_id, user_id),
+            ).fetchone()
+        return _public_api_key(row, plaintext=api_key)
 
     def revoke_api_key(self, user_id: int, key_id: int) -> bool:
         with self.database.transaction() as connection:
@@ -437,7 +475,6 @@ class UserRepository:
 
     def authenticate_api_key(self, api_key: str) -> dict[str, Any] | None:
         if not api_key:
-            _authenticated_user_id.set(None)
             return None
         key_hash = hash_api_key(api_key)
         with self.database.transaction() as connection:
@@ -453,9 +490,7 @@ class UserRepository:
                     (utc_now(), row["id"]),
                 )
         if row is None:
-            _authenticated_user_id.set(None)
             return None
-        _authenticated_user_id.set(int(row["user_id"]))
         return {
             "id": row["id"],
             "user_id": row["user_id"],
@@ -720,4 +755,4 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
 
 
-__all__ = ["UserRepository", "get_authenticated_user_id", "hash_api_key"]
+__all__ = ["UserRepository", "hash_api_key"]

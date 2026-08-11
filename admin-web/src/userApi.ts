@@ -1,4 +1,4 @@
-import type { CreditSummary, UserApiKey, UserMailbox, UserProfile } from "./userTypes";
+import type { CreditSummary, UserApiKey, UserAuthCodeInfo, UserMailbox, UserProfile } from "./userTypes";
 
 type ApiEnvelope<T> = {
   ok?: boolean;
@@ -107,10 +107,16 @@ export const userApi = {
       method: "POST",
       body: JSON.stringify({ name }),
     })),
+  regenerateApiKey: async (id: string | number) =>
+    unwrap(await request<ApiEnvelope<UserApiKey> | UserApiKey>(`/api-keys/${encodeURIComponent(String(id))}/regenerate`, {
+      method: "POST",
+    })),
   revokeApiKey: (id: string | number) =>
     request<ApiEnvelope<unknown> | unknown>(`/api-keys/${encodeURIComponent(String(id))}`, { method: "DELETE" }),
+  authCode: async () =>
+    unwrap(await request<ApiEnvelope<UserAuthCodeInfo> | UserAuthCodeInfo>("/auth-code", { cache: "no-store" })),
   setAuthCode: async (userAuthCode: string) =>
-    unwrap(await request<ApiEnvelope<{ userAuthCode?: string; user_auth_code?: string; authCode?: string; configured?: boolean }> | { userAuthCode?: string; user_auth_code?: string; authCode?: string; configured?: boolean }>("/auth-code", {
+    unwrap(await request<ApiEnvelope<UserAuthCodeInfo> | UserAuthCodeInfo>("/auth-code", {
       method: "PUT",
       body: JSON.stringify({ userAuthCode }),
     })),

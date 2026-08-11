@@ -138,7 +138,7 @@ def test_schema_upgrade_adds_persisted_verification_code_column(tmp_path: Path) 
         mailbox = connection.execute("SELECT verification_code FROM mailboxes WHERE id='mbx-old'").fetchone()
 
     assert "verification_code" in columns
-    assert version == SCHEMA_VERSION == 5
+    assert version == SCHEMA_VERSION == 7
     assert mailbox["verification_code"] == ""
 
 
@@ -179,6 +179,102 @@ def test_admin_pop_auth_code_is_stored_and_returned_as_plaintext(tmp_path: Path)
         ).fetchone()
     assert stored["admin_pop_auth_code"] == "plain-admin-pop-code"
     assert stored["admin_pop_auth_code_hash"] is None
+
+
+def test_user_pop_auth_code_is_stored_and_returned_as_plaintext(tmp_path: Path) -> None:
+    settings = replace(
+        gateway_settings(tmp_path),
+        pop3_public_host="pop.example.com",
+    )
+    app = create_app(settings)
+    user = app.state.user_repository.create_user(
+        username="pop-user",
+        password="user-password",
+        email="pop-user@example.com",
+    )
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/user-api/auth/login",
+            json={"username": "pop-user", "password": "user-password"},
+        )
+        saved = client.put(
+            "/user-api/auth-code",
+            json={"userAuthCode": "plain-user-pop-code"},
+        )
+        loaded = client.get("/user-api/auth-code")
+
+    assert login.status_code == 200
+    assert saved.status_code == 200
+    assert saved.json()["data"]["user_auth_code"] == "plain-user-pop-code"
+    assert loaded.status_code == 200
+    assert loaded.json()["data"] == {
+        "configured": True,
+        "user_auth_code": "plain-user-pop-code",
+        "legacy_hash_only": False,
+        "updated_at": loaded.json()["data"]["updated_at"],
+        "pop_host": "pop.example.com",
+        "pop_port": 110,
+        "mailboxes": [],
+    }
+    assert app.state.user_repository.verify_user_pop_auth_code(
+        int(user["id"]),
+        "plain-user-pop-code",
+    ) is True
+    with app.state.user_repository.database.read() as connection:
+        stored = connection.execute(
+            "SELECT user_auth_code, user_auth_code_hash FROM users WHERE id=?",
+            (user["id"],),
+        ).fetchone()
+    assert stored["user_auth_code"] == "plain-user-pop-code"
+    assert stored["user_auth_code_hash"] is None
+
+
+def test_user_api_key_is_stored_listed_and_regenerated_as_plaintext(tmp_path: Path) -> None:
+    app = create_app(gateway_settings(tmp_path))
+    user = app.state.user_repository.create_user(
+        username="api-key-user",
+        password="user-password",
+        email="api-key-user@example.com",
+    )
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/user-api/auth/login",
+            json={"username": "api-key-user", "password": "user-password"},
+        )
+        created = client.post(
+            "/user-api/api-keys",
+            json={"name": "image2api"},
+        )
+        first_key = created.json()["data"]["api_key"]
+        listed = client.get("/user-api/api-keys")
+        regenerated = client.post(
+            f"/user-api/api-keys/{created.json()['data']['id']}/regenerate"
+        )
+        second_key = regenerated.json()["data"]["api_key"]
+        listed_after = client.get("/user-api/api-keys")
+
+    assert login.status_code == 200
+    assert created.status_code == 201
+    assert first_key.startswith("xmk_")
+    assert listed.json()["data"][0]["api_key"] == first_key
+    assert listed.json()["data"][0]["legacy_hash_only"] is False
+    assert regenerated.status_code == 200
+    assert second_key.startswith("xmk_")
+    assert second_key != first_key
+    assert listed_after.json()["data"][0]["api_key"] == second_key
+    assert app.state.user_repository.authenticate_api_key(first_key) is None
+    authenticated = app.state.user_repository.authenticate_api_key(second_key)
+    assert authenticated is not None
+    assert int(authenticated["user_id"]) == int(user["id"])
+    with app.state.user_repository.database.read() as connection:
+        stored = connection.execute(
+            "SELECT api_key, key_hash FROM user_api_keys WHERE id=?",
+            (created.json()["data"]["id"],),
+        ).fetchone()
+    assert stored["api_key"] == second_key
+    assert stored["key_hash"] != second_key
 
 
 def test_user_can_register_with_email_code_and_login_by_email(tmp_path: Path, monkeypatch) -> None:

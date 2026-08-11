@@ -29,8 +29,9 @@
 | POST | `/user-api/auth/sessions/revoke-all` | 撤销全部会话 |
 | GET | `/user-api/me` | 当前用户信息 |
 | GET/POST | `/user-api/api-keys` | 查询或创建用户调用密钥 |
+| POST | `/user-api/api-keys/{keyId}/regenerate` | 重新生成调用密钥并使旧值失效 |
 | DELETE | `/user-api/api-keys/{keyId}` | 撤销调用密钥 |
-| PUT | `/user-api/auth-code` | 保存用户中心自动生成的用户 POP 授权码 |
+| GET/PUT | `/user-api/auth-code` | 查询或保存用户 POP 授权码明文及 POP3 连接参数 |
 | GET | `/user-api/credits` | 查询积分余额和流水摘要 |
 | GET | `/user-api/mailboxes` | 查询自己的邮箱记录 |
 
@@ -71,6 +72,8 @@
 管理员接口只使用管理员会话，不需要用户 `X-API-Key` 或 `mailboxToken`。当前 HTTP 管理 API 提供全部邮箱记录和请求日志查询；管理员查看邮件正文使用 POP3 `110` + 管理员全局 POP 授权码，不提供独立的 HTTP 邮件内容、刷新、释放或邮箱 POP 开关接口。用户释放自己的邮箱仍使用普通业务 API 的 `DELETE /v1/mailboxes/{id}`。
 
 管理员执行 `POST /admin-api/users/{userId}/reset-auth-code` 时，只会立即使该用户旧授权码失效并清除“已配置”状态，不向管理员返回新授权码明文。普通用户需要登录用户中心点击按钮重新生成自己的 `userAuthCode`；这样管理员拥有全量邮箱访问权限，但不会接触普通用户授权码明文。
+
+`GET /user-api/auth-code` 只允许当前登录用户访问，返回该用户自己的 `user_auth_code`、公网 `pop_host`、固定 `pop_port=110` 和该用户可用的邮箱地址列表。普通用户授权码按明文保存，因此用户下次登录后仍可查看和复制；从旧版哈希字段升级的授权码无法反推，需要用户重置一次。用户调用密钥同样按明文保存并在 `GET /user-api/api-keys` 中返回给所属用户；旧哈希密钥需要调用重新生成接口后才能完整显示。
 
 列表查询补充：
 
@@ -278,9 +281,9 @@ Authorization: Mailbox <mailboxToken>
 
 ## 10. 安全要求
 
-- 用户登录密码、普通用户 POP 授权码、管理员全局 POP 授权码和调用密钥分别存储；
-- 完整授权码和调用密钥只展示一次；
-- 管理员不能查看普通用户授权码明文；
+- 用户登录密码、普通用户 POP 授权码、管理员全局 POP 授权码和调用密钥分别存储；POP 授权码和用户调用密钥按明文保存，并只通过对应受鉴权页面回显；
+- 用户可以长期查看和复制自己的完整调用密钥及 POP 授权码；
+- 管理员不能通过用户列表查看普通用户授权码明文，普通用户只能通过自己的用户会话读取自身授权码；
 - 管理员全局 POP 授权码按产品要求直接以明文存入数据库，仅允许管理员会话通过 `/admin-api/pop-auth-code` 查询和修改；
 - 管理员用户、积分、授权码、实例和域名等 HTTP 管理操作必须审计；POP3 邮件读取通过独立 TCP 会话完成，当前不提供独立的 HTTP POP 读取或 POP 会话审计接口；
 - 日志不得记录授权码、调用密钥、邮箱内部密码、CloudMail Token、验证码明文或完整邮件正文；

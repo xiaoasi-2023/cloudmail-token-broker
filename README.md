@@ -77,6 +77,7 @@ SMTP_TLS=true
 POP3_ENABLED=true
 POP3_BIND_HOST=0.0.0.0
 POP3_PORT=8110
+POP3_PUBLIC_HOST=pop.cloudmail.xiaoasi.xyz
 POP3_MAX_CONNECTIONS=100
 POP3_MAX_AUTH_FAILURES=3
 POP3_MAX_MESSAGES=20
@@ -100,7 +101,7 @@ POP3 `110` 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主�
 
 ### 已有线上部署更新
 
-本次版本会自动将数据库结构升级到版本 `5`。线上更新必须先备份 `.env` 和 PostgreSQL，再补齐用户注册与 SMTP 配置，最后执行 `docker compose pull` 和 `docker compose up -d --force-recreate`。不要再次清空调用密钥、邮箱记录或请求日志。升级后需要在管理端重新保存一次管理员全局 POP 授权码，并完成真实注册邮件和 POP3 `110` 点验。完整流程见[宝塔部署手册](docs/deployment.md#4-已有线上部署升级)。
+本次版本会自动将数据库结构升级到版本 `7`，新增普通用户 POP 授权码和用户调用密钥明文字段。线上更新必须先备份 `.env` 和 PostgreSQL，再补齐 `POP3_PUBLIC_HOST`、用户注册与 SMTP 配置，最后执行 `docker compose pull` 和 `docker compose up -d --force-recreate`。不要再次清空调用密钥、邮箱记录或请求日志。旧版只保存哈希的授权码和调用密钥无法反推，分别重置或重新生成一次后即可在用户中心长期查看。完整流程见[宝塔部署手册](docs/deployment.md#4-已有线上部署升级)。
 
 ## 首次配置流程
 
@@ -108,7 +109,7 @@ POP3 `110` 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主�
 2. 配置 CloudMail 实例和邮箱域名。
 3. 在管理端设置管理员全局 POP 授权码；该值按明文保存，可在管理端随时查看、复制和修改。
 4. 开启自助注册后，普通用户在 `/user/` 输入账号、邮箱和密码，获取邮箱验证码后完成注册；关闭时仍由管理员创建用户。
-5. 普通用户使用账号或注册邮箱登录 `/user/`，点击按钮自动生成自己的 `userAuthCode`。
+5. 普通用户使用账号或注册邮箱登录 `/user/`，点击按钮自动生成自己的 `userAuthCode`；生成后可长期查看和复制完整值，连接页会自动展示 POP 主机、110 端口及可用邮箱地址。
 6. 普通用户在用户中心创建自己的 `X-API-Key`。
 7. 使用用户密钥调用 `POST /v1/mailboxes` 创建邮箱。
 

@@ -28,11 +28,28 @@ export interface UserApiKey {
   maskedKey?: string;
   api_key?: string;
   apiKey?: string;
+  legacy_hash_only?: boolean;
+  legacyHashOnly?: boolean;
   enabled?: boolean;
   last_used_at?: string | null;
   lastUsedAt?: string | null;
   created_at?: string;
   createdAt?: string;
+}
+
+export interface UserAuthCodeInfo {
+  configured: boolean;
+  user_auth_code?: string;
+  userAuthCode?: string;
+  legacy_hash_only?: boolean;
+  legacyHashOnly?: boolean;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+  pop_host: string;
+  popHost?: string;
+  pop_port: number;
+  popPort?: number;
+  mailboxes: string[];
 }
 
 export interface CreditTransaction {

@@ -45,7 +45,7 @@ import type { InputRef } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { UserApiError, userApi } from "./userApi";
-import type { CreditTransaction, UserApiKey, UserMailbox, UserProfile } from "./userTypes";
+import type { CreditTransaction, UserApiKey, UserAuthCodeInfo, UserMailbox, UserProfile } from "./userTypes";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -64,10 +64,17 @@ const userNavItems = [
 const userPageMeta: Record<UserPageKey, { title: string; description: string }> = {
   overview: { title: "账户概览", description: "查看当前账户状态、积分和邮箱接入准备情况" },
   apiKeys: { title: "我的调用密钥", description: "管理用于调用网关业务 API 的用户级 X-API-Key" },
-  authCode: { title: "我的 POP 授权码", description: "设置连接 POP3 110 时使用的用户级授权码" },
+  authCode: { title: "我的 POP 授权码", description: "查看和管理 POP3 110 的完整连接参数" },
   credits: { title: "我的积分", description: "查看余额和最近的积分变更摘要" },
   mailboxes: { title: "我的邮箱", description: "查看当前账户创建的邮箱及其生命周期状态" },
   security: { title: "账号安全", description: "修改登录密码、撤销会话并安全退出用户中心" },
+};
+
+const userTablePagination = {
+  defaultPageSize: 20,
+  showSizeChanger: true,
+  pageSizeOptions: [20, 50, 100],
+  showTotal: (total: number) => `共 ${total} 条`,
 };
 
 function formatTime(value?: string | null) {
@@ -255,15 +262,6 @@ function ErrorState({ error, retry }: { error: string; retry: () => void }) {
   return <Alert showIcon type="error" message="数据加载失败" description={error} action={<Button onClick={retry}>重新加载</Button>} />;
 }
 
-function OneTimeSecret({ title, secret, description, onClose }: { title: string; secret: string; description: string; onClose: () => void }) {
-  return (
-    <Modal open title={title} onCancel={onClose} onOk={onClose} okText="我已安全保存" cancelButtonProps={{ style: { display: "none" } }} destroyOnClose>
-      <Alert type="warning" showIcon message="完整值只显示这一次" description={description} />
-      <div className="one-time-secret"><Text code copyable={{ text: secret }}><span>{secret}</span></Text><Button type="text" icon={<CopyOutlined />} onClick={() => void navigator.clipboard?.writeText(secret)}>复制</Button></div>
-    </Modal>
-  );
-}
-
 function OverviewPage({ user, onNavigate }: { user: UserProfile; onNavigate: (page: UserPageKey) => void }) {
   const { message } = AntApp.useApp();
   const [credits, setCredits] = useState(creditBalance(user));
@@ -306,7 +304,7 @@ function OverviewPage({ user, onNavigate }: { user: UserProfile; onNavigate: (pa
         <Card><Statistic title="POP 授权码" value={configured ? "已配置" : "未配置"} prefix={<SafetyCertificateOutlined />} /></Card>
       </div>
       <Card className="user-preflight-card" title="开始使用前的三项准备">
-        <div className={`preflight-item ${configured ? "done" : ""}`}><span>01</span><CheckCircleOutlined /><div><b>设置用户级 POP 授权码</b><small>{configured ? "已配置，可用于该用户全部邮箱的 POP3 登录" : "邮件客户端连接 POP3 110 时需要"}</small></div><Button type="link" onClick={() => onNavigate("authCode")}>{configured ? "重置" : "去设置"}</Button></div>
+        <div className={`preflight-item ${configured ? "done" : ""}`}><span>01</span><CheckCircleOutlined /><div><b>生成用户级 POP 授权码</b><small>{configured ? "已配置，可查看完整 POP3 连接参数" : "邮件客户端连接 POP3 110 时需要"}</small></div><Button type="link" onClick={() => onNavigate("authCode")}>{configured ? "查看" : "去生成"}</Button></div>
         <div className="preflight-item"><span>02</span><KeyOutlined /><div><b>创建自己的 X-API-Key</b><small>调用 POST /v1/mailboxes 创建邮箱</small></div><Button type="link" onClick={() => onNavigate("apiKeys")}>去管理</Button></div>
         <div className="preflight-item"><span>03</span><WalletOutlined /><div><b>确认积分余额</b><small>创建邮箱会按管理端配置扣除积分</small></div><Button type="link" onClick={() => onNavigate("credits")}>查看积分</Button></div>
       </Card>
@@ -320,8 +318,8 @@ function ApiKeysPage() {
   const [items, setItems] = useState<UserApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [oneTimeKey, setOneTimeKey] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -336,10 +334,8 @@ function ApiKeysPage() {
     const values = await form.validateFields();
     setSaving(true);
     try {
-      const created = await userApi.createApiKey(values.name.trim());
-      const fullKey = created.api_key || created.apiKey || "";
-      setOneTimeKey(fullKey);
-      message.success(fullKey ? "调用密钥已创建，请立即安全保存" : "调用密钥已创建");
+      await userApi.createApiKey(values.name.trim());
+      message.success("调用密钥已创建，可随时查看和复制");
       setModalOpen(false);
       form.resetFields();
       await load();
@@ -352,20 +348,29 @@ function ApiKeysPage() {
     catch (error) { message.error(getErrorMessage(error)); }
   };
 
+  const regenerate = async (item: UserApiKey) => {
+    setRegeneratingId(item.id);
+    try {
+      await userApi.regenerateApiKey(item.id);
+      message.success("调用密钥已重新生成，旧值立即失效");
+      await load();
+    } catch (error) { message.error(getErrorMessage(error)); }
+    finally { setRegeneratingId(null); }
+  };
+
   const columns: ColumnsType<UserApiKey> = [
     { title: "名称", dataIndex: "name", render: (value) => <Text strong>{value}</Text> },
-    { title: "密钥状态", key: "key", render: (_, item) => <div className="primary-cell"><b>{item.key_masked || item.keyMasked || item.masked_key || item.maskedKey || item.key_prefix || item.keyPrefix || "已创建，明文不可回显"}</b><span>完整密钥仅在创建成功时展示一次</span></div> },
+    { title: "调用密钥", key: "key", render: (_, item) => { const fullKey = item.api_key || item.apiKey || ""; return fullKey ? <div className="api-key-display"><Text code copyable={{ text: fullKey }}>{fullKey}</Text><span>完整密钥可随时查看和复制</span></div> : <div className="primary-cell"><b>{item.key_masked || item.keyMasked || item.masked_key || item.maskedKey || item.key_prefix || item.keyPrefix || "旧密钥"}</b><span>旧密钥无法反推，点击重新生成后即可完整显示</span></div>; } },
     { title: "状态", key: "enabled", width: 100, render: (_, item) => item.enabled === false ? <Tag>已停用</Tag> : <Tag color="success">有效</Tag> },
     { title: "创建时间", key: "created_at", width: 180, render: (_, item) => formatTime(item.created_at || item.createdAt) },
-    { title: "操作", key: "actions", width: 110, render: (_, item) => <Popconfirm title="撤销后该密钥立即失效，确认继续？" onConfirm={() => void revoke(item)}><Button size="small" danger icon={<DeleteOutlined />}>撤销</Button></Popconfirm> },
+    { title: "操作", key: "actions", width: 205, render: (_, item) => <Space size={6}><Popconfirm title="重新生成后旧密钥立即失效，确认继续？" onConfirm={() => void regenerate(item)}><Button size="small" loading={regeneratingId === item.id} icon={<ReloadOutlined />}>重新生成</Button></Popconfirm><Popconfirm title="撤销后该密钥立即失效，确认继续？" onConfirm={() => void revoke(item)}><Button size="small" danger icon={<DeleteOutlined />}>撤销</Button></Popconfirm></Space> },
   ];
 
   return <>
-    {oneTimeKey && <OneTimeSecret title="保存新的 X-API-Key" secret={oneTimeKey} description="关闭此窗口后，用户中心不会再次显示完整密钥。请将它保存到安全的密钥管理位置。" onClose={() => setOneTimeKey("")} />}
-    <div className="toolbar"><div className="toolbar-copy"><Text type="secondary">业务接口请求头：X-API-Key</Text><Text type="secondary">历史密钥只显示前缀或掩码，不能回显明文。</Text></div><Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button><Button type="primary" icon={<KeyOutlined />} onClick={() => setModalOpen(true)}>创建调用密钥</Button></Space></div>
-    <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="还没有调用密钥" /> }} scroll={{ x: 760 }} />
-    <Modal title="创建用户调用密钥" open={modalOpen} confirmLoading={saving} okText="创建并显示一次" cancelText="取消" onOk={() => void create()} onCancel={() => { setModalOpen(false); form.resetFields(); }} destroyOnClose>
-      <Alert className="form-alert" type="info" showIcon message="请为密钥命名" description="创建成功后完整 API Key 只显示一次，之后只能看到掩码。" />
+    <div className="toolbar"><div className="toolbar-copy"><Text type="secondary">业务接口请求头：X-API-Key</Text><Text type="secondary">完整密钥会长期显示，可直接复制使用。</Text></div><Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button><Button type="primary" icon={<KeyOutlined />} onClick={() => setModalOpen(true)}>创建调用密钥</Button></Space></div>
+    <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={userTablePagination} locale={{ emptyText: <Empty description="还没有调用密钥" /> }} scroll={{ x: 900 }} />
+    <Modal title="创建用户调用密钥" open={modalOpen} confirmLoading={saving} okText="创建密钥" cancelText="取消" onOk={() => void create()} onCancel={() => { setModalOpen(false); form.resetFields(); }} destroyOnClose>
+      <Alert className="form-alert" type="info" showIcon message="请为密钥命名" description="创建成功后完整 API Key 会保存在用户中心，可随时查看和复制。" />
       <Form form={form} layout="vertical" requiredMark={false}>
         <Form.Item label="密钥名称" name="name" rules={[{ required: true, message: "请输入密钥名称" }, { max: 100, message: "名称不能超过 100 个字符" }]}><Input placeholder="例如：图片站生产环境" autoFocus /></Form.Item>
       </Form>
@@ -375,17 +380,39 @@ function ApiKeysPage() {
 
 function AuthCodePage({ user, onConfigured }: { user: UserProfile; onConfigured: () => void }) {
   const { message } = AntApp.useApp();
+  const [info, setInfo] = useState<UserAuthCodeInfo | null>(null);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [oneTimeCode, setOneTimeCode] = useState("");
-  const configured = authCodeConfigured(user);
+  const [selectedMailbox, setSelectedMailbox] = useState("");
+
+  const applyInfo = useCallback((result: UserAuthCodeInfo) => {
+    const mailboxes = result.mailboxes || [];
+    setInfo(result);
+    setSelectedMailbox((current) => current && mailboxes.includes(current) ? current : (mailboxes[0] || ""));
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { applyInfo(await userApi.authCode()); }
+    catch (error) { message.error(getErrorMessage(error)); }
+    finally { setLoading(false); }
+  }, [applyInfo, message]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const configured = info?.configured ?? authCodeConfigured(user);
+  const currentCode = info?.user_auth_code || info?.userAuthCode || "";
+  const legacyHashOnly = Boolean(info?.legacy_hash_only ?? info?.legacyHashOnly);
+  const popHost = info?.pop_host || info?.popHost || "pop.cloudmail.xiaoasi.xyz";
+  const popPort = info?.pop_port || info?.popPort || 110;
+  const mailboxes = info?.mailboxes || [];
 
   const generate = async () => {
     setSaving(true);
     try {
       const generatedCode = generateUserAuthCode();
       const result = await userApi.setAuthCode(generatedCode);
-      const returnedCode = result.userAuthCode || result.user_auth_code || result.authCode || generatedCode;
-      setOneTimeCode(returnedCode);
+      applyInfo(result);
       onConfigured();
       message.success(configured ? "POP 授权码已自动重置，旧值立即失效" : "POP 授权码已自动生成");
     } catch (error) { message.error(getErrorMessage(error)); }
@@ -393,15 +420,19 @@ function AuthCodePage({ user, onConfigured }: { user: UserProfile; onConfigured:
   };
 
   return <>
-    {oneTimeCode && <OneTimeSecret title="保存新的 userAuthCode" secret={oneTimeCode} description="这是接口返回的完整授权码，关闭此窗口后不会再次回显。普通 POP3 客户端使用它连接 110 端口。" onClose={() => setOneTimeCode("")} />}
     <div className="user-auth-grid">
-      <Card className="user-secret-card" title={<span><SafetyCertificateOutlined /> POP3 访问状态</span>}>
-        <div className={`auth-status ${configured ? "ready" : "not-ready"}`}><span className="auth-status-dot" /><div><b>{configured ? "授权码已配置" : "尚未配置授权码"}</b><small>{configured ? "可以使用该用户的邮箱地址 + userAuthCode 读取 POP3 邮件" : "创建邮箱前需要先设置用户级授权码"}</small></div></div>
-        <Descriptions column={1} size="small" className="auth-connection-info"><Descriptions.Item label="POP 主机">由部署环境提供</Descriptions.Item><Descriptions.Item label="端口">110</Descriptions.Item><Descriptions.Item label="用户名">你的邮箱完整地址</Descriptions.Item><Descriptions.Item label="密码">当前用户 userAuthCode</Descriptions.Item></Descriptions>
+      <Card className="user-secret-card" title={<span><SafetyCertificateOutlined /> POP3 连接信息</span>}>
+        <div className={`auth-status ${configured ? "ready" : "not-ready"}`}><span className="auth-status-dot" /><div><b>{configured ? "授权码已配置" : "尚未配置授权码"}</b><small>{legacyHashOnly ? "当前是旧版哈希授权码，重置一次后即可长期查看明文。" : configured ? "以下连接参数已自动读取，可直接复制到 POP3 客户端。" : "生成授权码并创建邮箱后即可连接 POP3。"}</small></div></div>
+        <Descriptions column={1} size="small" className="auth-connection-info">
+          <Descriptions.Item label="POP 主机">{loading ? <Spin size="small" /> : <Text className="connection-code" code copyable={{ text: popHost }}>{popHost}</Text>}</Descriptions.Item>
+          <Descriptions.Item label="端口"><Text className="connection-code" code copyable={{ text: String(popPort) }}>{popPort}</Text></Descriptions.Item>
+          <Descriptions.Item label="用户名">{mailboxes.length ? <Space size={6} wrap><Select className="connection-mailbox-select" value={selectedMailbox} onChange={setSelectedMailbox} options={mailboxes.map((address) => ({ value: address, label: address }))} popupMatchSelectWidth={false} /><Button className="connection-copy-button" type="text" icon={<CopyOutlined />} onClick={() => void navigator.clipboard?.writeText(selectedMailbox)}>复制</Button></Space> : <span className="connection-placeholder">暂无可用邮箱，请先创建邮箱</span>}</Descriptions.Item>
+          <Descriptions.Item label="密码">{currentCode ? <Text className="connection-code" code copyable={{ text: currentCode }}>{currentCode}</Text> : <span className="connection-placeholder">{legacyHashOnly ? "旧授权码无法反推，请点击右侧重置" : "尚未生成授权码"}</span>}</Descriptions.Item>
+        </Descriptions>
       </Card>
       <Card className="user-auth-action-card" title={configured ? "重置 userAuthCode" : "生成 userAuthCode"}>
-        <Alert className="form-alert" type={configured ? "warning" : "info"} showIcon message={configured ? "重置后旧授权码立即失效" : "授权码用于该用户全部邮箱的 POP3 登录"} description="系统将自动生成高强度授权码，无需手动输入或重复确认。" />
-        <div className="auth-code-auto-panel"><KeyOutlined /><div><b>{configured ? "生成新的随机授权码" : "自动创建随机授权码"}</b><small>{configured ? "点击按钮后立即替换当前授权码，并弹窗展示新值。" : "生成成功后会弹窗展示完整值，请及时复制保存。"}</small></div></div>
+        <Alert className="form-alert" type={configured ? "warning" : "info"} showIcon message={configured ? "重置后旧授权码立即失效" : "授权码用于该用户全部邮箱的 POP3 登录"} description={legacyHashOnly ? "旧授权码只有哈希值，无法回显；重置后新值会长期保存在本页。" : "授权码会保存并长期显示，之后登录仍可查看和复制。"} />
+        <div className="auth-code-auto-panel"><KeyOutlined /><div><b>{configured ? "生成新的随机授权码" : "自动创建随机授权码"}</b><small>{configured ? "点击按钮后立即替换当前授权码，新的完整值会直接显示在左侧。" : "生成后会自动写入连接信息，无需手动输入或重复确认。"}</small></div></div>
         <Button type="primary" icon={<ReloadOutlined />} loading={saving} onClick={() => void generate()}>{configured ? "重置并自动生成" : "自动生成授权码"}</Button>
       </Card>
     </div>
@@ -430,9 +461,8 @@ function CreditsPage({ user }: { user: UserProfile }) {
   ];
 
   return <>
-    <div className="user-credit-hero"><div><Text className="section-index">CREDIT BALANCE</Text><Title level={2}>可用积分</Title><Paragraph>创建邮箱时会按照管理员配置的单次费用扣除积分，失败或超时按服务端规则处理。</Paragraph></div><Statistic value={loading ? "—" : balance} suffix="分" /></div>
-    <div className="toolbar"><Text type="secondary">最近积分变更摘要</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>
-    <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无积分变更记录" /> }} scroll={{ x: 700 }} />
+    <div className="toolbar"><Space size={18}><Text strong>当前余额：<Text className="success-text">{loading ? "—" : balance} 分</Text></Text><Text type="secondary">最近积分变更摘要</Text></Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>
+    <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={userTablePagination} locale={{ emptyText: <Empty description="暂无积分变更记录" /> }} scroll={{ x: 700 }} />
   </>;
 }
 
@@ -479,7 +509,7 @@ function MailboxesPage() {
 
   return <>
     <div className="toolbar mailbox-toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索邮箱、域名或来源" style={{ width: 270 }} /><Select allowClear value={purpose || undefined} onChange={(value) => setPurpose(value || "")} placeholder="全部用途" style={{ width: 130 }} options={[{ value: "openai", label: "OpenAI" }, { value: "kiro", label: "Kiro" }, { value: "cursor", label: "Cursor" }, { value: "grok", label: "Grok" }]} /><Select allowClear value={mailboxStatus || undefined} onChange={(value) => setMailboxStatus(value || "")} placeholder="全部状态" style={{ width: 125 }} options={[{ value: "active", label: "使用中" }, { value: "expired", label: "已过期" }, { value: "released", label: "已释放" }]} /><Select allowClear value={verificationStatus || undefined} onChange={(value) => setVerificationStatus(value || "")} placeholder="验证码状态" style={{ width: 140 }} options={[{ value: "pending", label: "处理中" }, { value: "received", label: "已收到" }, { value: "timeout", label: "已超时" }, { value: "failed", label: "失败" }]} /></div><Space><Text type="secondary">{items.length} 条</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></Space></div>
-    {error ? <ErrorState error={error} retry={() => void load()} /> : <Table className="dense-table" size="small" rowKey={(item) => item.id || item.mailbox_id || item.mailboxId || item.address} loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="没有符合条件的邮箱记录" /> }} scroll={{ x: 980 }} />}
+    {error ? <ErrorState error={error} retry={() => void load()} /> : <Table className="dense-table" size="small" rowKey={(item) => item.id || item.mailbox_id || item.mailboxId || item.address} loading={loading} columns={columns} dataSource={items} pagination={userTablePagination} locale={{ emptyText: <Empty description="没有符合条件的邮箱记录" /> }} scroll={{ x: 980 }} />}
   </>;
 }
 
@@ -564,7 +594,7 @@ function UserConsole({ user, onUnauthorized }: { user: UserProfile; onUnauthoriz
     <Drawer className="mobile-drawer user-mobile-drawer" width={260} placement="left" open={mobileOpen} onClose={() => setMobileOpen(false)} closable={false}>{sidebar}</Drawer>
     <Layout>
       <Header className="console-header user-console-header"><Button className="desktop-collapse" type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Button className="mobile-menu" type="text" icon={<MenuUnfoldOutlined />} onClick={() => setMobileOpen(true)} /><Text className="section-index header-console-name">USER WORKSPACE</Text><Badge status="success" text={`${displayName(currentUser)} · 用户会话已连接`} /></Header>
-      <Content className="console-content"><div className="page-heading"><div><Title level={2}>{meta.title}</Title><Text>{meta.description}</Text></div><span className="page-code">USER / {String(userNavItems.findIndex((item) => item.key === page) + 1).padStart(2, "0")}</span></div><div className="page-body">{content}</div></Content>
+      <Content className="console-content"><div className="page-heading"><div><Title level={2}>{meta.title}</Title><Text>{meta.description}</Text></div></div><div className="page-body">{content}</div></Content>
     </Layout>
   </Layout>;
 }

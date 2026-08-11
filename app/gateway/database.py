@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.pool import StaticPool
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 logger = logging.getLogger("xiaoasi_mail_gateway.database")
 
 
@@ -260,6 +260,7 @@ class GatewayDatabase:
                     password_hash TEXT NOT NULL,
                     role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin', 'user')),
                     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
+                    user_auth_code TEXT,
                     user_auth_code_hash TEXT,
                     user_auth_code_updated_at TEXT,
                     admin_pop_auth_code TEXT,
@@ -280,6 +281,7 @@ class GatewayDatabase:
                     name TEXT NOT NULL,
                     key_prefix TEXT NOT NULL,
                     key_hash TEXT NOT NULL UNIQUE,
+                    api_key TEXT,
                     enabled INTEGER NOT NULL DEFAULT 1,
                     last_used_at TEXT,
                     created_at TEXT NOT NULL,
@@ -372,6 +374,12 @@ class GatewayDatabase:
                 connection.execute(
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_pop_auth_code TEXT"
                 )
+                connection.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS user_auth_code TEXT"
+                )
+                connection.execute(
+                    "ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS api_key TEXT"
+                )
             else:
                 mailbox_columns = {
                     str(row["name"])
@@ -425,6 +433,15 @@ class GatewayDatabase:
                 }
                 if "admin_pop_auth_code" not in user_columns:
                     connection.execute("ALTER TABLE users ADD COLUMN admin_pop_auth_code TEXT")
+                if "user_auth_code" not in user_columns:
+                    connection.execute("ALTER TABLE users ADD COLUMN user_auth_code TEXT")
+
+                api_key_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(user_api_keys)").fetchall()
+                }
+                if "api_key" not in api_key_columns:
+                    connection.execute("ALTER TABLE user_api_keys ADD COLUMN api_key TEXT")
 
             connection.executescript(
                 """
