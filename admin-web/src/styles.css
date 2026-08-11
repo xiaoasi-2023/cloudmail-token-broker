@@ -183,21 +183,46 @@ button, input, textarea { font: inherit; }
 
 /* User center */
 .user-login-shell { min-height: 100vh; display: grid; grid-template-columns: minmax(420px, 1fr) minmax(420px, .86fr); background: #101513; }
+.user-login-shell.is-register { grid-template-columns: minmax(420px, 1fr) minmax(420px, .86fr); }
 .user-login-aside { position: relative; overflow: hidden; padding: clamp(42px, 7vw, 100px); color: #f3f2eb; display: flex; flex-direction: column; justify-content: space-between; background: radial-gradient(circle at 80% 20%, rgba(118,155,136,.22), transparent 31%), linear-gradient(145deg, #18201d 0%, #0d1210 72%); }
+.user-login-shell.is-register .user-login-aside { padding: clamp(42px, 7vw, 100px); }
 .user-login-aside::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .18; background-image: linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px); background-size: 48px 48px; mask-image: linear-gradient(120deg, #000, transparent 80%); }
 .user-login-aside > * { position: relative; z-index: 1; }
 .user-aside-top { display: flex; align-items: center; gap: 18px; }
+.user-intro-index { color: #d9865e !important; font: 600 10px "IBM Plex Mono", monospace; letter-spacing: .16em; }
 .user-login-intro h1.ant-typography { margin: 20px 0 22px; color: #f3f2eb; font-size: clamp(42px, 5vw, 74px); line-height: .98; letter-spacing: -.06em; }
+.user-login-shell.is-register .user-login-intro h1.ant-typography { font-size: clamp(42px, 5vw, 74px); }
+.user-login-intro h1.ant-typography span { color: #d97748; }
 .user-login-intro p.ant-typography { max-width: 520px; color: #b4beb8; font-size: 17px; line-height: 1.8; }
+.user-intro-points { display: grid; gap: 12px; margin-top: 30px; color: #9eaaa4; font-size: 13px; }
+.user-intro-points span { display: flex; align-items: center; gap: 12px; }
+.user-intro-points b { color: #d97748; font: 600 10px "IBM Plex Mono", monospace; }
 .user-aside-foot { display: flex; justify-content: space-between; gap: 20px; color: #78837e; font: 600 10px "IBM Plex Mono", monospace; letter-spacing: .12em; }
-.user-login-panel { background: #f4f3ed; display: grid; place-items: center; padding: 48px; border-left: 1px solid #35403b; }
+.user-login-panel { min-width: 0; background: #f4f3ed; display: grid; place-items: center; padding: 34px 48px; border-left: 1px solid #35403b; overflow-y: auto; }
+.user-login-shell.is-register .user-login-panel { padding: 12px 40px; }
 .user-login-form-wrap { width: min(430px, 100%); }
-.user-login-form-wrap h2 { margin: 12px 0 4px; letter-spacing: -.03em; }
-.user-login-form-wrap form { margin-top: 34px; }
+.user-login-form-wrap.register-mode { width: min(540px, 100%); }
+.user-login-form-wrap h2 { margin: 10px 0 3px; letter-spacing: -.03em; }
+.user-login-form-wrap.register-mode h2 { font-size: 32px; }
+.user-login-form-wrap.register-mode > .ant-typography-secondary { font-size: 14px; }
+.user-login-form-wrap form { margin-top: 24px; }
+.user-login-form-wrap.register-mode form { margin-top: 14px; }
 .user-login-form-wrap .ant-btn-primary { height: 48px; margin-top: 8px; box-shadow: 4px 4px 0 #733b25; }
-.user-login-form-wrap .register-code-button { min-width: 128px; height: 40px; }
-.user-login-form-wrap .auth-mode-switch { margin-top: 18px; color: #315746; }
-.user-login-form-wrap .auth-mode-switch:hover { color: #1f3e31 !important; }
+.user-login-form-wrap .register-code-button { min-width: 136px; height: 46px; }
+.auth-mode-text { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 12px; color: #747c78; font-size: 13px; }
+.auth-mode-text button { padding: 0; color: #315746; background: transparent; border: 0; cursor: pointer; font-weight: 600; }
+.auth-mode-text button:hover { color: #d46936; text-decoration: underline; text-underline-offset: 3px; }
+.register-form-grid { display: grid; grid-template-columns: 1fr; }
+.user-register-form .ant-form-item { margin-bottom: 10px; }
+.user-register-form .ant-form-item-label { padding-bottom: 4px; }
+.user-register-form .ant-form-item-label > label { height: 22px; font-size: 14px; }
+.user-register-form .register-code-field { grid-column: auto; }
+.user-register-form .ant-input-affix-wrapper { height: 44px; min-height: 44px; padding-block: 0; font-size: 14px; }
+.user-register-form .ant-input-affix-wrapper > .ant-input { height: auto; min-height: 0; }
+.user-login-form-wrap .register-code-button { height: 44px; font-size: 14px; }
+.user-login-form-wrap.register-mode .ant-btn-primary { height: 46px; margin-top: 12px; font-size: 14px; }
+.user-login-form-wrap.register-mode .auth-mode-text { margin-top: 12px; font-size: 13px; }
+.secure-note { margin-top: 14px; }
 .user-console-layout { background: #ecece5; }
 .user-console-brand .brand-mark { background: #769b88; box-shadow: 6px 6px 0 #304e40; }
 .user-sider .ant-menu-item-selected { box-shadow: inset 3px 0 #769b88; }
@@ -254,6 +279,7 @@ button, input, textarea { font: inherit; }
 
 @media (max-width: 900px) {
   .user-login-shell { grid-template-columns: 1fr; }
+  .user-login-shell.is-register { grid-template-columns: 1fr; }
   .user-login-aside { min-height: 42vh; padding: 42px 28px; }
   .user-login-intro h1.ant-typography { font-size: 44px; }
   .user-login-panel { padding: 44px 24px; }
@@ -262,6 +288,11 @@ button, input, textarea { font: inherit; }
   .user-auth-grid, .user-security-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {
+  .user-login-aside { min-height: 300px; }
+  .user-login-panel { padding: 34px 20px; }
+  .register-form-grid { grid-template-columns: 1fr; }
+  .user-register-form .register-code-field { grid-column: auto; }
+  .user-login-form-wrap .register-code-button { min-width: 112px; padding-inline: 12px; }
   .user-stat-grid { grid-template-columns: 1fr; }
   .user-welcome-card .ant-card-body { display: block; padding: 28px; }
   .user-welcome-card h2 { font-size: 28px; }

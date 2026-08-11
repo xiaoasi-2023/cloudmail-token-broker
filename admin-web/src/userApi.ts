@@ -4,7 +4,7 @@ type ApiEnvelope<T> = {
   ok?: boolean;
   code?: number | string;
   data?: T;
-  detail?: { code?: string; message?: string };
+  detail?: { code?: string; message?: string } | Array<{ msg?: string; loc?: Array<string | number> }>;
   message?: string;
 };
 
@@ -41,13 +41,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const detail = payload && typeof payload === "object" && "detail" in payload
       ? (payload as ApiEnvelope<T>).detail
       : undefined;
+    const detailMessage = Array.isArray(detail)
+      ? detail.find((item) => item.msg)?.msg
+      : detail?.message;
+    const detailCode = Array.isArray(detail) ? undefined : detail?.code;
     if (response.status === 401) {
       window.dispatchEvent(new Event("user-unauthorized"));
     }
     throw new UserApiError(
-      detail?.message || (payload && typeof payload === "object" && "message" in payload ? String((payload as ApiEnvelope<T>).message) : "请求失败，请稍后重试") || `请求失败（HTTP ${response.status}）`,
+      detailMessage || (payload && typeof payload === "object" && "message" in payload ? String((payload as ApiEnvelope<T>).message) : "请求失败，请稍后重试") || `请求失败（HTTP ${response.status}）`,
       response.status,
-      detail?.code || String(payload && typeof payload === "object" && "code" in payload ? (payload as ApiEnvelope<T>).code : "REQUEST_FAILED"),
+      detailCode || String(payload && typeof payload === "object" && "code" in payload ? (payload as ApiEnvelope<T>).code : "REQUEST_FAILED"),
     );
   }
 
@@ -74,7 +78,7 @@ function asList<T>(payload: unknown): T[] {
 }
 
 export const userApi = {
-  registrationConfig: async () => unwrap(await request<ApiEnvelope<{ enabled: boolean; code_ttl_seconds: number; code_cooldown_seconds: number }> | { enabled: boolean; code_ttl_seconds: number; code_cooldown_seconds: number }>("/auth/registration-config")),
+  registrationConfig: async () => unwrap(await request<ApiEnvelope<{ enabled: boolean; code_ttl_seconds: number; code_cooldown_seconds: number }> | { enabled: boolean; code_ttl_seconds: number; code_cooldown_seconds: number }>("/auth/registration-config", { cache: "no-store" })),
   sendRegisterCode: async (email: string) => unwrap(await request<ApiEnvelope<{ ttl_seconds: number; cooldown_seconds: number }> | { ttl_seconds: number; cooldown_seconds: number }>("/auth/register-code", {
     method: "POST",
     body: JSON.stringify({ email }),

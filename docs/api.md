@@ -6,6 +6,7 @@
 - 生产 API：`https://cloudmail.xiaoasi.xyz`；
 - 管理端：`https://cloudmail.xiaoasi.xyz/admin/`；
 - 用户中心：`https://cloudmail.xiaoasi.xyz/user/`；
+- 默认入口：`https://cloudmail.xiaoasi.xyz/`，自动跳转用户中心，未登录时显示登录/注册页；
 - POP3：`pop.cloudmail.xiaoasi.xyz:110`；
 - `995` 不开放；
 - `/admin/` 和 `/user/` 都是同一 FastAPI 容器提供的静态入口，不是 HTTP 模拟的 POP 服务；

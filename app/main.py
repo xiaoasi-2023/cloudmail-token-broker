@@ -296,7 +296,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/")
     async def root():
         if resolved_settings.gateway_enabled:
-            return RedirectResponse(url="/admin/")
+            return RedirectResponse(url="/user/")
         return {"ok": True, "service": "xiaoasi-mail-gateway", "gatewayEnabled": False}
 
     static_path = Path(resolved_settings.admin_static_dir)

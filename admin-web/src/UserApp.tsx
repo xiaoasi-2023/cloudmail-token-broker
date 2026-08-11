@@ -142,8 +142,7 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
 
   const sendRegisterCode = async () => {
     try {
-      await registerForm.validateFields(["email"]);
-      const email = registerForm.getFieldValue("email");
+      const { email } = await registerForm.validateFields(["email"]);
       setSendingCode(true);
       const result = await userApi.sendRegisterCode(email);
       setCountdown(Number(result.cooldown_seconds || 60));
@@ -170,24 +169,29 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
   };
 
   return (
-    <main className="user-login-shell">
+    <main className={`user-login-shell ${mode === "register" ? "is-register" : "is-login"}`}>
       <section className="user-login-aside">
         <div className="user-aside-top">
           <div className="brand-mark large"><UserOutlined /></div>
           <Text className="eyebrow">XIAOASI USER CENTER</Text>
         </div>
         <div className="user-login-intro">
-          <Title>你的邮箱<br />接入控制台</Title>
-          <Paragraph>集中管理调用密钥、POP 授权码、积分和已创建邮箱。连接方式清晰，敏感凭据只在必要时出现。</Paragraph>
+          <Text className="user-intro-index">{mode === "login" ? "ACCESS / SIGN IN" : "NEW ACCOUNT / VERIFY"}</Text>
+          <Title>{mode === "login" ? <><span>你的邮箱</span><br />接入控制台</> : <><span>创建账号</span><br />开始收取邮件</>}</Title>
+          <Paragraph>{mode === "login" ? "集中管理调用密钥、POP 授权码、积分和已创建邮箱。" : "验证常用邮箱后创建用户账号，随后即可配置 POP 授权码和调用密钥。"}</Paragraph>
+          <div className="user-intro-points">
+            <span><b>01</b> 邮箱验证码注册</span>
+            <span><b>02</b> 用户数据独立隔离</span>
+          </div>
         </div>
-        <div className="user-aside-foot"><span>USER ACCESS / 01</span><span>POP3 : 110</span></div>
+        <div className="user-aside-foot"><span>USER ACCESS / 01</span></div>
       </section>
       <section className="user-login-panel">
-        <div className="user-login-form-wrap">
+        <div className={`user-login-form-wrap ${mode === "register" ? "register-mode" : "login-mode"}`}>
           <Text className="section-index">ACCOUNT / {mode === "login" ? "SIGN IN" : "REGISTER"}</Text>
           <Title level={2}>{mode === "login" ? "用户登录" : "注册用户账号"}</Title>
           <Paragraph type="secondary">{mode === "login" ? (registrationEnabled ? "使用账号或邮箱登录，也可以注册新的普通用户。" : "使用管理员创建的普通用户账号进入用户中心。") : "使用邮箱验证码创建普通用户，初始积分按管理端规则发放。"}</Paragraph>
-          {mode === "login" ? <Form layout="vertical" onFinish={submit} requiredMark={false} size="large">
+          {mode === "login" ? <Form className="user-auth-form user-signin-form" layout="vertical" onFinish={submit} requiredMark={false} size="large">
             <Form.Item label="用户账号 / 邮箱" name="username" rules={[{ required: true, message: "请输入用户账号或邮箱" }]}>
               <Input autoComplete="username" placeholder="输入账号或邮箱" prefix={<UserOutlined />} />
             </Form.Item>
@@ -195,31 +199,35 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
               <Input.Password autoComplete="current-password" placeholder="输入登录密码" prefix={<LockOutlined />} />
             </Form.Item>
             <Button block type="primary" htmlType="submit" loading={loading}>进入用户中心</Button>
-          </Form> : <Form form={registerForm} layout="vertical" onFinish={register} requiredMark={false} size="large">
-            <Form.Item label="用户账号" name="username" rules={[{ required: true, message: "请输入用户账号" }, { min: 3, message: "用户账号至少 3 位" }, { pattern: /^[a-zA-Z0-9_.-]+$/, message: "账号只能包含字母、数字、点、下划线和短横线" }]}>
-              <Input autoComplete="username" placeholder="用于登录，例如 xiaoasi" prefix={<UserOutlined />} />
-            </Form.Item>
-            <Form.Item label="注册邮箱" name="email" rules={[{ required: true, message: "请输入注册邮箱" }, { type: "email", message: "请输入有效的邮箱地址" }]}>
-              <Input autoComplete="email" placeholder="接收注册验证码" prefix={<MailOutlined />} />
-            </Form.Item>
-            <Form.Item label="邮箱验证码" required>
-              <Space.Compact block>
-                <Form.Item name="code" noStyle rules={[{ required: true, message: "请输入邮箱验证码" }, { pattern: /^\d{6}$/, message: "请输入 6 位数字验证码" }]}>
-                  <Input inputMode="numeric" maxLength={6} placeholder="6 位验证码" prefix={<SafetyCertificateOutlined />} />
-                </Form.Item>
-                <Button className="register-code-button" loading={sendingCode} disabled={countdown > 0} onClick={() => void sendRegisterCode()}>{countdown > 0 ? `${countdown}s 后重试` : "获取验证码"}</Button>
-              </Space.Compact>
-            </Form.Item>
-            <Form.Item label="登录密码" name="password" rules={[{ required: true, message: "请输入登录密码" }, { min: 10, message: "登录密码至少 10 位" }]}>
-              <Input.Password autoComplete="new-password" placeholder="至少 10 位" prefix={<LockOutlined />} />
-            </Form.Item>
-            <Form.Item label="确认密码" name="confirm" dependencies={["password"]} rules={[{ required: true, message: "请再次输入登录密码" }, ({ getFieldValue }) => ({ validator(_, value) { return !value || getFieldValue("password") === value ? Promise.resolve() : Promise.reject(new Error("两次输入的密码不一致")); } })]}>
-              <Input.Password autoComplete="new-password" placeholder="再次输入登录密码" prefix={<LockOutlined />} />
-            </Form.Item>
-            <Button block type="primary" htmlType="submit" loading={loading}>验证邮箱并注册</Button>
+          </Form> : <Form className="user-auth-form user-register-form" form={registerForm} layout="vertical" onFinish={register} requiredMark={false} size="middle">
+            <div className="register-form-grid">
+              <Form.Item label="用户账号" name="username" rules={[{ required: true, message: "请输入用户账号" }, { min: 3, message: "用户账号至少 3 位" }, { pattern: /^[a-zA-Z0-9_.-]+$/, message: "账号只能包含字母、数字、点、下划线和短横线" }]}>
+                <Input autoComplete="username" placeholder="例如 xiaoasi" prefix={<UserOutlined />} />
+              </Form.Item>
+              <Form.Item label="注册邮箱" name="email" rules={[{ required: true, message: "请输入注册邮箱" }, { type: "email", message: "请输入有效的邮箱地址" }]}>
+                <Input autoComplete="email" placeholder="用于接收验证码" prefix={<MailOutlined />} />
+              </Form.Item>
+              <Form.Item className="register-code-field" label="邮箱验证码" required>
+                <Space.Compact block>
+                  <Form.Item name="code" noStyle rules={[{ required: true, message: "请输入邮箱验证码" }, { pattern: /^\d{6}$/, message: "请输入 6 位数字验证码" }]}>
+                    <Input inputMode="numeric" maxLength={6} placeholder="输入 6 位验证码" prefix={<SafetyCertificateOutlined />} />
+                  </Form.Item>
+                  <Button className="register-code-button" loading={sendingCode} disabled={countdown > 0} onClick={() => void sendRegisterCode()}>{countdown > 0 ? `${countdown}s 后重试` : "获取验证码"}</Button>
+                </Space.Compact>
+              </Form.Item>
+              <Form.Item label="登录密码" name="password" rules={[{ required: true, message: "请输入登录密码" }, { min: 10, message: "登录密码至少 10 位" }]}>
+                <Input.Password autoComplete="new-password" placeholder="至少 10 位" prefix={<LockOutlined />} />
+              </Form.Item>
+              <Form.Item label="确认密码" name="confirm" dependencies={["password"]} rules={[{ required: true, message: "请再次输入登录密码" }, ({ getFieldValue }) => ({ validator(_, value) { return !value || getFieldValue("password") === value ? Promise.resolve() : Promise.reject(new Error("两次输入的密码不一致")); } })]}>
+                <Input.Password autoComplete="new-password" placeholder="再次输入登录密码" prefix={<LockOutlined />} />
+              </Form.Item>
+            </div>
+            <Button block type="primary" htmlType="submit" loading={loading}>验证邮箱并创建账号</Button>
           </Form>}
-          {registrationEnabled && <Button className="auth-mode-switch" type="link" block onClick={() => setMode((value) => value === "login" ? "register" : "login")}>{mode === "login" ? "没有账号？使用邮箱注册" : "已有账号？返回登录"}</Button>}
-          <div className="secure-note"><SafetyCertificateOutlined /> 使用 HttpOnly Cookie 会话，不在浏览器保存登录凭证</div>
+          {registrationEnabled && <div className="auth-mode-text">
+            <span>{mode === "login" ? "还没有账号？" : "已经有账号？"}</span>
+            <button type="button" onClick={() => setMode((value) => value === "login" ? "register" : "login")}>{mode === "login" ? "立即注册" : "返回登录"}</button>
+          </div>}
         </div>
       </section>
     </main>

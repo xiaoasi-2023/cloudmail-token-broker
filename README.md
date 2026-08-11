@@ -88,6 +88,7 @@ POP3_MAX_MESSAGES=20
 
 ```text
 HTTPS API： https://cloudmail.xiaoasi.xyz
+默认入口： https://cloudmail.xiaoasi.xyz/ （自动进入用户中心，未登录时显示登录/注册页）
 管理端：   https://cloudmail.xiaoasi.xyz/admin/
 用户中心： https://cloudmail.xiaoasi.xyz/user/
 POP3：     pop.cloudmail.xiaoasi.xyz:110
@@ -95,7 +96,7 @@ POP3：     pop.cloudmail.xiaoasi.xyz:110
 
 POP3 `110` 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主机应将 `110` 映射到容器内部的 `8110`，并在防火墙放行 `110/tcp`。首期普通 `USER/PASS` 不经过 TLS，必须限制访问来源；`995` 不开放。
 
-管理端和用户中心都由同一个 FastAPI 容器提供静态入口：管理端为 `/admin/`，用户中心为 `/user/`，不需要单独部署第二个前端容器。
+管理端和用户中心都由同一个 FastAPI 容器提供静态入口：根路径 `/` 默认跳转 `/user/`，管理端为 `/admin/`，用户中心为 `/user/`，不需要单独部署第二个前端容器。
 
 ### 已有线上部署更新
 

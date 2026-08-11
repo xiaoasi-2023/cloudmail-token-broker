@@ -66,6 +66,8 @@ POP3_MAX_MESSAGES=20
 
 开启 `USER_REGISTRATION_ENABLED=true` 时，SMTP 六项配置必须完整。`SMTP_TLS=true` 在 `465` 端口使用 SSL 连接；`SMTP_PASSWORD` 填邮箱服务商生成的 SMTP 授权码，不能提交到 Git。若不开放注册，将开关改为 `false`，用户仍可由唯一管理员创建。
 
+根域名 `/` 默认跳转到 `/user/`。普通用户未登录时显示用户登录/注册页，已登录时直接进入用户中心；唯一管理员仍通过 `/admin/` 登录。
+
 `POP3_PORT=8110` 只控制容器内监听端口；对外 `110` 由 Compose 的 `110:8110` 映射提供。当前代码没有 `POP3_PUBLIC_PORT`、`POP3_STLS_ENABLED` 或证书路径环境变量，不能通过环境变量打开 `995` 或 STLS。
 
 数据库密码包含 `@`、`:`、`/`、`?`、`#` 等字符时需要 URL 编码。PostgreSQL 不由 Docker Compose 创建，必须提前创建数据库并允许 Docker 网桥访问。

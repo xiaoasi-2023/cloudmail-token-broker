@@ -24,6 +24,16 @@ def gateway_settings(tmp_path: Path) -> Settings:
     )
 
 
+def test_root_redirects_to_user_center(tmp_path: Path) -> None:
+    app = create_app(gateway_settings(tmp_path))
+
+    with TestClient(app) as client:
+        response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/user/"
+
+
 def test_gateway_enabled_app_boots_and_admin_can_manage_instances(tmp_path: Path) -> None:
     app = create_app(gateway_settings(tmp_path))
 
