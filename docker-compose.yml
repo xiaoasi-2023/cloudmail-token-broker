@@ -11,6 +11,8 @@ services:
     ports:
       - "127.0.0.1:8788:8080"
       - "110:8110"
+      - "18110:8110"
+      - "995:8110"
     security_opt:
       - no-new-privileges:true
     read_only: true

@@ -291,14 +291,18 @@ button, input, textarea { font: inherit; }
 .not-ready .auth-status-dot { background: #dfb266; box-shadow: 0 0 0 5px rgba(223,178,102,.12); }
 .auth-status b, .auth-status small { display: block; }
 .auth-status small { margin-top: 5px; color: #b8c7bd; line-height: 1.6; }
-.auth-connection-info { margin-top: 28px; }
-.user-secret-card .ant-descriptions-item-label { color: #9caea3; }
-.user-secret-card .ant-descriptions-item-content { color: #edf3ee; }
-.user-secret-card .connection-code { max-width: 100%; color: #d7f0df; background: #25382f; border-color: #425d4d; word-break: break-all; }
-.connection-mailbox-select { min-width: 260px; max-width: 100%; }
+.auth-connection-info { display: grid; gap: 10px; margin-top: 28px; }
+.auth-connection-row { display: grid; grid-template-columns: 76px minmax(0, 1fr) 66px; align-items: center; gap: 12px; min-height: 36px; }
+.connection-label { color: #9caea3; font-size: 13px; white-space: nowrap; }
+.connection-value { min-width: 0; min-height: 36px; padding: 0 11px; display: flex; align-items: center; color: #d7f0df; border: 1px solid #425d4d; background: #25382f; }
+.connection-value code { min-width: 0; overflow: hidden; color: inherit; background: transparent; font: 500 12px/1.4 "IBM Plex Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.connection-select-value { padding: 0; border: 0; background: transparent; }
+.connection-mailbox-select { width: 100%; min-width: 0; }
+.connection-mailbox-select .ant-select-selector { height: 36px !important; padding-inline: 11px !important; align-items: center; }
 .connection-mailbox-select .ant-select-selector { color: #edf3ee !important; background: #22352b !important; border-color: #486351 !important; }
 .connection-mailbox-select .ant-select-selection-item { color: #edf3ee !important; }
-.user-secret-card .connection-copy-button { color: #a7d3b7; }
+.user-secret-card .connection-copy-button { width: 66px; padding-inline: 0; justify-content: flex-start; color: #a7d3b7; }
+.user-secret-card .connection-copy-button:disabled { color: #607268; }
 .user-secret-card .connection-copy-button:hover { color: #d7f0df !important; background: #2c4437 !important; }
 .connection-placeholder { color: #94a49a; }
 .auth-code-auto-panel { display: flex; align-items: flex-start; gap: 14px; margin: 22px 0; padding: 20px; border: 1px solid #ddd9c8; background: #f4f2e8; }
@@ -330,4 +334,7 @@ button, input, textarea { font: inherit; }
   .preflight-item { grid-template-columns: 28px 22px 1fr; gap: 8px; }
   .preflight-item .ant-btn { grid-column: 3; justify-self: start; padding-left: 0; }
   .user-aside-foot { font-size: 9px; }
+  .auth-connection-row { grid-template-columns: minmax(0, 1fr) 58px; gap: 7px 10px; }
+  .connection-label { grid-column: 1 / -1; }
+  .user-secret-card .connection-copy-button { width: 58px; }
 }

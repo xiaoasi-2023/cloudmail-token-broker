@@ -2,13 +2,13 @@
 
 ## 1. 基本信息
 
-- 生产协议：HTTPS；POP3 使用独立 TCP `110`；
+- 生产协议：HTTPS；POP3 使用独立 TCP `18110`；
 - 生产 API：`https://cloudmail.xiaoasi.xyz`；
 - 管理端：`https://cloudmail.xiaoasi.xyz/admin/`；
 - 用户中心：`https://cloudmail.xiaoasi.xyz/user/`；
 - 默认入口：`https://cloudmail.xiaoasi.xyz/`，自动跳转用户中心，未登录时显示登录/注册页；
-- POP3：`pop.cloudmail.xiaoasi.xyz:110`；
-- `995` 不开放；
+- POP3：`pop.cloudmail.xiaoasi.xyz:18110`；
+- `110` 和 `995` 映射暂时保留，但当前服务器厂商禁止使用；
 - `/admin/` 和 `/user/` 都是同一 FastAPI 容器提供的静态入口，不是 HTTP 模拟的 POP 服务；
 - 业务 API 使用用户自己的 `X-API-Key`；
 - 邮箱查询、验证码和释放接口同时使用 `X-API-Key` 与 `mailboxToken`；
@@ -69,11 +69,11 @@
 | GET | `/admin-api/overview` | 管理端概览 |
 | GET | `/admin-api/request-logs` | 请求日志 |
 
-管理员接口只使用管理员会话，不需要用户 `X-API-Key` 或 `mailboxToken`。当前 HTTP 管理 API 提供全部邮箱记录和请求日志查询；管理员查看邮件正文使用 POP3 `110` + 管理员全局 POP 授权码，不提供独立的 HTTP 邮件内容、刷新、释放或邮箱 POP 开关接口。用户释放自己的邮箱仍使用普通业务 API 的 `DELETE /v1/mailboxes/{id}`。
+管理员接口只使用管理员会话，不需要用户 `X-API-Key` 或 `mailboxToken`。当前 HTTP 管理 API 提供全部邮箱记录和请求日志查询；管理员查看邮件正文使用 POP3 `18110` + 管理员全局 POP 授权码，不提供独立的 HTTP 邮件内容、刷新、释放或邮箱 POP 开关接口。用户释放自己的邮箱仍使用普通业务 API 的 `DELETE /v1/mailboxes/{id}`。
 
 管理员执行 `POST /admin-api/users/{userId}/reset-auth-code` 时，只会立即使该用户旧授权码失效并清除“已配置”状态，不向管理员返回新授权码明文。普通用户需要登录用户中心点击按钮重新生成自己的 `userAuthCode`；这样管理员拥有全量邮箱访问权限，但不会接触普通用户授权码明文。
 
-`GET /user-api/auth-code` 只允许当前登录用户访问，返回该用户自己的 `user_auth_code`、公网 `pop_host`、固定 `pop_port=110` 和该用户可用的邮箱地址列表。普通用户授权码按明文保存，因此用户下次登录后仍可查看和复制；从旧版哈希字段升级的授权码无法反推，需要用户重置一次。用户调用密钥同样按明文保存并在 `GET /user-api/api-keys` 中返回给所属用户；旧哈希密钥需要调用重新生成接口后才能完整显示。
+`GET /user-api/auth-code` 只允许当前登录用户访问，返回该用户自己的 `user_auth_code`、公网 `pop_host`、由 `POP3_PUBLIC_PORT` 配置的 `pop_port` 和该用户可用的邮箱地址列表。当前生产配置为 `18110`。普通用户授权码按明文保存，因此用户下次登录后仍可查看和复制；从旧版哈希字段升级的授权码无法反推，需要用户重置一次。用户调用密钥同样按明文保存并在 `GET /user-api/api-keys` 中返回给所属用户；旧哈希密钥需要调用重新生成接口后才能完整显示。
 
 列表查询补充：
 
@@ -217,13 +217,13 @@ Authorization: Mailbox <mailboxToken>
 
 该接口将网关记录标记为 `released`，不保证删除 CloudMail 上游账号。
 
-## 8. POP3 110
+## 8. POP3 18110
 
 ### 普通用户
 
 ```text
 服务器：pop.cloudmail.xiaoasi.xyz
-端口：110
+端口：18110
 安全性：普通 POP3
 用户名：邮箱 address
 密码：该邮箱所属用户的 userAuthCode
@@ -235,13 +235,13 @@ Authorization: Mailbox <mailboxToken>
 
 ```text
 服务器：pop.cloudmail.xiaoasi.xyz
-端口：110
+端口：18110
 安全性：普通 POP3
 用户名：任意未物理删除且上游仍存在的邮箱 address
 密码：管理员全局 POP 授权码
 ```
 
-管理员全局 POP 授权码可以读取全部用户、过期和已释放邮箱，但不能读取已经物理清理或 CloudMail 上游已删除的邮箱。普通 `110` 首期不加密，不开放 `995`，当前没有 STLS 配置项。
+管理员全局 POP 授权码可以读取全部用户、过期和已释放邮箱，但不能读取已经物理清理或 CloudMail 上游已删除的邮箱。当前 `18110` 使用普通明文 POP3，不支持 STLS 或隐式 TLS；虽然 Compose 保留 `995` 映射，但它不是 POP3S 服务端口。
 
 首期命令：`CAPA`、`USER`、`PASS`、`STAT`、`LIST`、`UIDL`、`RETR`、`TOP`、`NOOP`、`RSET`、`QUIT`。其中 `CAPA`、`NOOP`、`RSET` 和 `TOP` 用于兼容常见邮件客户端；`DELE`、SMTP、IMAP、附件和完整原始 MIME 不在首期范围内。客户端必须关闭“从服务器删除邮件”，网关对 `DELE` 返回只读错误。
 
@@ -287,5 +287,5 @@ Authorization: Mailbox <mailboxToken>
 - 管理员全局 POP 授权码按产品要求直接以明文存入数据库，仅允许管理员会话通过 `/admin-api/pop-auth-code` 查询和修改；
 - 管理员用户、积分、授权码、实例和域名等 HTTP 管理操作必须审计；POP3 邮件读取通过独立 TCP 会话完成，当前不提供独立的 HTTP POP 读取或 POP 会话审计接口；
 - 日志不得记录授权码、调用密钥、邮箱内部密码、CloudMail Token、验证码明文或完整邮件正文；
-- 110 明文模式必须限制网络来源；
+- 18110 明文模式必须限制网络来源；
 - 旧数据迁移必须先备份，使用显式 `--apply` 执行。

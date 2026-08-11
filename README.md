@@ -2,7 +2,7 @@
 
 Xiaoasi Mail Gateway 是一个统一邮箱网关，负责管理多个 CloudMail 实例、邮箱域名、用户、调用密钥、积分和 POP3 邮件访问。
 
-> 当前仓库已实现用户中心、积分和 POP3 `110` 监听；上线前仍需使用真实 CloudMail 环境完成验收，并按部署文档放行 `110/tcp`。`995` 不开放。
+> 当前仓库已实现用户中心、积分和 POP3 服务；容器内部监听 `8110`，当前服务器对外使用 `18110/tcp`。`110` 和 `995` 映射暂时保留，但因服务器厂商限制不作为当前接入端口。
 
 图片站、Kirox、Windows EXE 和其他调用方只接入网关，不保存 CloudMail 管理员账号、密码、Token 或内部接口路径。
 
@@ -15,7 +15,7 @@ Xiaoasi Mail Gateway 是一个统一邮箱网关，负责管理多个 CloudMail 
 - 创建邮箱按管理端配置扣除积分；
 - 唯一管理员管理全部用户、邮箱、日志、实例、域名和积分；
 - 管理员独立 POP 授权码，可以读取全部未物理删除且上游仍存在的邮箱；
-- 固定 POP3 `110` 端口只读取信，不开放 `995`；
+- POP3 只读取信，当前公网接入端口为 `18110`；
 - `Idempotency-Key` 幂等创建和短期 `mailboxToken`；
 - 统一验证码查询和 CloudMail Provider 适配；
 - PostgreSQL 持久化和一次性旧数据清理迁移。
@@ -29,8 +29,8 @@ POST /v1/mailboxes
       ↓ 积分预扣、选择域名和 CloudMail 实例
 CloudMail addUser
       ↓ 返回邮箱地址和 mailboxToken
-普通用户：POP3 110 + 邮箱地址 + userAuthCode
-管理员：POP3 110 + 任意邮箱地址 + 管理员 POP 授权码
+普通用户：POP3 18110 + 邮箱地址 + userAuthCode
+管理员：POP3 18110 + 任意邮箱地址 + 管理员 POP 授权码
       ↓
 网关调用 CloudMail emailList 并转换为 POP 邮件
 ```
@@ -78,12 +78,13 @@ POP3_ENABLED=true
 POP3_BIND_HOST=0.0.0.0
 POP3_PORT=8110
 POP3_PUBLIC_HOST=pop.cloudmail.xiaoasi.xyz
+POP3_PUBLIC_PORT=18110
 POP3_MAX_CONNECTIONS=100
 POP3_MAX_AUTH_FAILURES=3
 POP3_MAX_MESSAGES=20
 ```
 
-`POP3_PORT=8110` 是容器内监听端口；对外 `110` 由 `docker-compose.yml` 的 `110:8110` 映射提供，不配置 `POP3_PUBLIC_PORT`。首期不启用 STLS/POP3S，不能通过环境变量打开 `995`。
+`POP3_PORT=8110` 是容器内监听端口；`POP3_PUBLIC_PORT=18110` 控制用户中心展示给客户端的公网端口。Compose 同时保留 `110:8110`、`18110:8110` 和 `995:8110`，当前实际只使用 `18110`。服务仍是普通明文 POP3，`995` 映射不代表已经支持 POP3S/TLS，客户端不得使用隐式 TLS 连接该端口。
 
 外部服务地址：
 
@@ -92,16 +93,16 @@ HTTPS API： https://cloudmail.xiaoasi.xyz
 默认入口： https://cloudmail.xiaoasi.xyz/ （自动进入用户中心，未登录时显示登录/注册页）
 管理端：   https://cloudmail.xiaoasi.xyz/admin/
 用户中心： https://cloudmail.xiaoasi.xyz/user/
-POP3：     pop.cloudmail.xiaoasi.xyz:110
+POP3：     pop.cloudmail.xiaoasi.xyz:18110
 ```
 
-POP3 `110` 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主机应将 `110` 映射到容器内部的 `8110`，并在防火墙放行 `110/tcp`。首期普通 `USER/PASS` 不经过 TLS，必须限制访问来源；`995` 不开放。
+POP3 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主机当前将 `18110` 映射到容器内部的 `8110`，并在防火墙和云安全组放行 `18110/tcp`。普通 `USER/PASS` 不经过 TLS，必须限制访问来源。
 
 管理端和用户中心都由同一个 FastAPI 容器提供静态入口：根路径 `/` 默认跳转 `/user/`，管理端为 `/admin/`，用户中心为 `/user/`，不需要单独部署第二个前端容器。
 
 ### 已有线上部署更新
 
-本次版本会自动将数据库结构升级到版本 `7`，新增普通用户 POP 授权码和用户调用密钥明文字段。线上更新必须先备份 `.env` 和 PostgreSQL，再补齐 `POP3_PUBLIC_HOST`、用户注册与 SMTP 配置，最后执行 `docker compose pull` 和 `docker compose up -d --force-recreate`。不要再次清空调用密钥、邮箱记录或请求日志。旧版只保存哈希的授权码和调用密钥无法反推，分别重置或重新生成一次后即可在用户中心长期查看。完整流程见[宝塔部署手册](docs/deployment.md#4-已有线上部署升级)。
+本次版本会自动将数据库结构升级到版本 `7`，新增普通用户 POP 授权码和用户调用密钥明文字段。线上更新必须先备份 `.env` 和 PostgreSQL，再补齐 `POP3_PUBLIC_HOST=pop.cloudmail.xiaoasi.xyz`、`POP3_PUBLIC_PORT=18110`、用户注册与 SMTP 配置，最后执行 `docker compose pull` 和 `docker compose up -d --force-recreate`。不要再次清空调用密钥、邮箱记录或请求日志。旧版只保存哈希的授权码和调用密钥无法反推，分别重置或重新生成一次后即可在用户中心长期查看。完整流程见[宝塔部署手册](docs/deployment.md#4-已有线上部署升级)。
 
 ## 首次配置流程
 
@@ -109,7 +110,7 @@ POP3 `110` 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主�
 2. 配置 CloudMail 实例和邮箱域名。
 3. 在管理端设置管理员全局 POP 授权码；该值按明文保存，可在管理端随时查看、复制和修改。
 4. 开启自助注册后，普通用户在 `/user/` 输入账号、邮箱和密码，获取邮箱验证码后完成注册；关闭时仍由管理员创建用户。
-5. 普通用户使用账号或注册邮箱登录 `/user/`，点击按钮自动生成自己的 `userAuthCode`；生成后可长期查看和复制完整值，连接页会自动展示 POP 主机、110 端口及可用邮箱地址。
+5. 普通用户使用账号或注册邮箱登录 `/user/`，点击按钮自动生成自己的 `userAuthCode`；生成后可长期查看和复制完整值，连接页会自动展示 POP 主机、当前公网端口及可用邮箱地址。
 6. 普通用户在用户中心创建自己的 `X-API-Key`。
 7. 使用用户密钥调用 `POST /v1/mailboxes` 创建邮箱。
 
@@ -146,7 +147,7 @@ curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
 
 ```text
 服务器：pop.cloudmail.xiaoasi.xyz
-端口：110
+端口：18110
 安全性：普通 POP3
 用户名：创建邮箱后返回的完整 address
 密码：该邮箱所属用户的 userAuthCode
@@ -156,7 +157,7 @@ curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
 
 ```text
 服务器：pop.cloudmail.xiaoasi.xyz
-端口：110
+端口：18110
 安全性：普通 POP3
 用户名：任意未物理删除的邮箱 address
 密码：管理员全局 POP 授权码

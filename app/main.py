@@ -105,6 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 registration_enabled=resolved_settings.user_registration_enabled,
                 registration=registration_service,
                 pop3_public_host=resolved_settings.pop3_public_host,
+                pop3_public_port=resolved_settings.pop3_public_port,
             )
         )
         business_store = DatabaseGatewayBusinessStore(database, cipher)

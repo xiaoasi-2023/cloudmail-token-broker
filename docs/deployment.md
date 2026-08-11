@@ -1,8 +1,8 @@
 # Xiaoasi Mail Gateway 宝塔部署手册
 
-本文档描述 HTTPS API、管理端、用户中心和 POP3 `110` 的部署方式。`995` 不开放。
+本文档描述 HTTPS API、管理端、用户中心和 POP3 `18110` 的部署方式。容器内部仍监听 `8110`。
 
-> 当前仓库已接入 POP3 监听器及容器启动生命周期。生产邮件客户端接入前，仍需使用真实 CloudMail 环境完成验收，并确认宿主机防火墙放行 `110/tcp`；`995` 不开放。
+> 当前仓库已接入 POP3 监听器及容器启动生命周期。服务器厂商当前禁用 `110` 和 `995`，因此生产邮件客户端统一连接 `18110/tcp`。
 
 ## 1. 准备目录
 
@@ -58,18 +58,19 @@ POP3_ENABLED=true
 POP3_BIND_HOST=0.0.0.0
 POP3_PORT=8110
 POP3_PUBLIC_HOST=pop.cloudmail.xiaoasi.xyz
+POP3_PUBLIC_PORT=18110
 POP3_MAX_CONNECTIONS=100
 POP3_MAX_AUTH_FAILURES=3
 POP3_MAX_MESSAGES=20
 ```
 
-`DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 必须不同，生产环境不能随意修改。`ADMIN_PASSWORD_HASH` 与 `ADMIN_PASSWORD` 二选一，不能同时配置，生产优先使用哈希。普通 POP3 `110` 首期不启用 TLS，`995` 不开放；如果未来启用 `STLS`，再挂载证书和私钥。
+`DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 必须不同，生产环境不能随意修改。`ADMIN_PASSWORD_HASH` 与 `ADMIN_PASSWORD` 二选一，不能同时配置，生产优先使用哈希。当前 `18110` 是普通明文 POP3，不启用 STLS 或隐式 TLS。
 
 开启 `USER_REGISTRATION_ENABLED=true` 时，SMTP 六项配置必须完整。`SMTP_TLS=true` 在 `465` 端口使用 SSL 连接；`SMTP_PASSWORD` 填邮箱服务商生成的 SMTP 授权码，不能提交到 Git。若不开放注册，将开关改为 `false`，用户仍可由唯一管理员创建。
 
 根域名 `/` 默认跳转到 `/user/`。普通用户未登录时显示用户登录/注册页，已登录时直接进入用户中心；唯一管理员仍通过 `/admin/` 登录。
 
-`POP3_PORT=8110` 只控制容器内监听端口；对外 `110` 由 Compose 的 `110:8110` 映射提供。`POP3_PUBLIC_HOST` 用于用户中心自动展示公网 POP3 主机，不改变实际监听地址或端口。当前代码没有 `POP3_PUBLIC_PORT`、`POP3_STLS_ENABLED` 或证书路径环境变量，不能通过环境变量打开 `995` 或 STLS。
+`POP3_PORT=8110` 只控制容器内监听端口；`POP3_PUBLIC_HOST` 和 `POP3_PUBLIC_PORT=18110` 控制用户中心展示的客户端连接参数。Compose 同时映射 `110`、`18110` 和 `995` 到容器 `8110`，当前实际只开放并使用 `18110`。`995:8110` 只是保留端口映射，不提供 POP3S/TLS。
 
 数据库密码包含 `@`、`:`、`/`、`?`、`#` 等字符时需要 URL 编码。PostgreSQL 不由 Docker Compose 创建，必须提前创建数据库并允许 Docker 网桥访问。
 
@@ -80,10 +81,12 @@ Compose 至少需要以下端口映射：
 ```yaml
 ports:
   - "127.0.0.1:8788:8080"  # HTTPS API 由宝塔反向代理
-  - "110:8110"             # 对外 POP3，客户端固定连接 110
+  - "110:8110"             # 暂时保留，当前服务器厂商禁用
+  - "18110:8110"           # 当前对外 POP3 端口
+  - "995:8110"             # 暂时保留，不代表支持 POP3S/TLS
 ```
 
-容器内部使用 `8110` 是为了避免非 root 进程直接绑定特权端口；用户和外部邮件客户端仍然只配置 `110`。不要映射或开放 `995`。
+容器内部统一使用 `8110`。用户中心和外部邮件客户端配置 `18110`；防火墙和云安全组只需开放 `18110/tcp`。不要把 `995` 当作加密 POP3 端口使用。
 
 ## 4. 已有线上部署升级
 
@@ -149,7 +152,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
   "SELECT version FROM gateway_schema"
 ```
 
-预期版本为 `5`。
+预期版本为 `7`。
 
 ### 4.5 升级后验证
 
@@ -157,8 +160,8 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
 curl -fsS http://127.0.0.1:8788/healthz
 curl -fsS http://127.0.0.1:8788/user-api/auth/registration-config
 curl -fsSI https://cloudmail.xiaoasi.xyz/user/
-nc -vz 127.0.0.1 110
-printf 'QUIT\r\n' | nc -v 127.0.0.1 110
+nc -vz 127.0.0.1 18110
+printf 'QUIT\r\n' | nc -v 127.0.0.1 18110
 ```
 
 健康检查应继续返回 `pop3Listening: true`，注册配置应返回 `enabled: true`，POP3 欢迎语应正常返回。
@@ -170,7 +173,7 @@ printf 'QUIT\r\n' | nc -v 127.0.0.1 110
 3. 打开 `/user/`，点击“没有账号？使用邮箱注册”，使用一个真实收件邮箱验证 SMTP 验证码邮件。
 4. 注册成功后确认用户自动登录、初始积分正确，并设置用户级 POP 授权码和创建用户调用密钥。
 5. 使用该用户调用密钥创建一个测试邮箱，确认积分扣除和邮箱归属正确。
-6. 使用测试邮箱地址、端口 `110` 和用户 POP 授权码完成一次真实 POP3 登录取信。
+6. 使用测试邮箱地址、端口 `18110` 和用户 POP 授权码完成一次真实 POP3 登录取信。
 7. 使用管理员全局 POP 授权码读取该测试邮箱，确认管理员仍可访问全部邮箱。
 
 容器应继续以非 root 用户运行。POP3 服务和 FastAPI 必须是独立的 TCP/HTTP 生命周期，不能使用 HTTP 路由模拟 POP3。FastAPI 同时挂载 `/admin/` 和 `/user/` 静态入口；宝塔只需将 HTTPS API 域名反向代理到 `127.0.0.1:8788`。
@@ -197,7 +200,7 @@ pop.cloudmail.xiaoasi.xyz  →  服务器公网 IP
 
 POP3 是原始 TCP 协议，不能通过普通 HTTP 反向代理转发。若使用 Cloudflare，POP3 域名必须使用 DNS only，除非另行购买并配置 TCP 代理能力。
 
-服务器防火墙必须允许业务来源访问 `110/tcp`，并且必须只允许已知业务服务器或办公网段访问；禁止将普通明文 POP3 对全公网开放。管理端、API 和数据库仍按最小来源范围限制。
+服务器防火墙和云安全组必须允许业务来源访问 `18110/tcp`，并且必须只允许已知业务服务器或办公网段访问；禁止将普通明文 POP3 对全公网开放。`110/tcp` 和 `995/tcp` 当前不作为业务入口。管理端、API 和数据库仍按最小来源范围限制。
 
 ## 6. 首次配置
 
@@ -208,7 +211,7 @@ POP3 是原始 TCP 协议，不能通过普通 HTTP 反向代理转发。若使�
 5. 创建普通用户并配置初始积分。
 6. 普通用户登录 `/user/`，点击按钮自动生成自己的 `userAuthCode`，并创建 `X-API-Key`。
 7. 使用用户密钥调用 `/v1/mailboxes` 验证邮箱创建和积分扣费。
-8. 使用普通用户授权码和管理员全局授权码分别验证 POP3 110 的访问范围。
+8. 使用普通用户授权码和管理员全局授权码分别验证 POP3 18110 的访问范围。
 
 ## 7. 验证命令
 
@@ -227,13 +230,13 @@ curl -fsSI https://cloudmail.xiaoasi.xyz/user/
 检查端口：
 
 ```bash
-nc -vz 127.0.0.1 110
+nc -vz 127.0.0.1 18110
 ```
 
 检查 POP3 欢迎语：
 
 ```bash
-printf 'QUIT\r\n' | nc -v pop.cloudmail.xiaoasi.xyz 110
+printf 'QUIT\r\n' | nc -v pop.cloudmail.xiaoasi.xyz 18110
 ```
 
 创建邮箱：
@@ -274,9 +277,9 @@ PGPASSWORD='数据库密码' pg_dump -h 127.0.0.1 -U 数据库用户 -d 数据�
 
 ## 10. 常见问题
 
-### POP3 110 无法连接
+### POP3 18110 无法连接
 
-检查容器端口映射是否为 `110:8110`、主机防火墙、云安全组、DNS 是否指向正确服务器，以及 POP3 进程是否监听容器内 `8110`。同时检查应用启动日志中 POP3 监听器已启动、停止时已释放端口；不要检查 `995`，本项目不开放该端口。
+检查容器端口映射是否包含 `18110:8110`、主机防火墙、云安全组、DNS 是否指向正确服务器，以及 POP3 进程是否监听容器内 `8110`。同时检查应用启动日志中 POP3 监听器已启动、停止时已释放端口。`110` 和 `995` 当前受服务器厂商限制，不用于业务验收。
 
 ### 普通用户能访问其他用户邮箱
 

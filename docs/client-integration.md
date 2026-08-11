@@ -18,7 +18,7 @@
 API Base URL: https://cloudmail.xiaoasi.xyz
 用户中心：    https://cloudmail.xiaoasi.xyz/user/
 健康检查：    https://cloudmail.xiaoasi.xyz/healthz
-POP3：        pop.cloudmail.xiaoasi.xyz:110
+POP3：        pop.cloudmail.xiaoasi.xyz:18110
 ```
 
 调用方不需要配置 CloudMail 地址、管理员账号、管理员密码、Token 或内部邮箱密码。
@@ -30,7 +30,7 @@ POP3：        pop.cloudmail.xiaoasi.xyz:110
   → 使用 X-API-Key 创建邮箱
   → 保存 mailboxId、address、mailboxToken
   → 使用 address 触发第三方验证邮件
-  → 通过 HTTP mailboxToken 查询验证码，或通过 POP3 110 读取邮件
+  → 通过 HTTP mailboxToken 查询验证码，或通过 POP3 18110 读取邮件
   → 任务结束后释放邮箱会话
 ```
 
@@ -165,13 +165,13 @@ Authorization: Mailbox <mailboxToken>
 
 释放只会把网关记录标记为 `released`，不保证删除 CloudMail 上游邮箱账号。
 
-## 6. POP3 110 读取邮件
+## 6. POP3 18110 读取邮件
 
 普通用户在邮件客户端中配置：
 
 ```text
 服务器：pop.cloudmail.xiaoasi.xyz
-端口：110
+端口：18110
 安全性：普通 POP3
 用户名：创建成功返回的完整 address
 密码：当前用户生成的 userAuthCode
@@ -196,7 +196,7 @@ PASS 用户 userAuthCode
 - `RETR`；
 - `QUIT`。
 
-首期不支持 `995`、SMTP、IMAP、`DELE`、附件和完整原始 MIME。为兼容常见邮件客户端，首期支持 `CAPA`、`NOOP`、`RSET` 和 `TOP`；客户端必须关闭“从服务器删除邮件”，网关对 `DELE` 返回只读错误。
+当前 `18110` 使用普通明文 POP3，不支持 STLS、隐式 TLS、SMTP、IMAP、`DELE`、附件和完整原始 MIME。Compose 保留的 `995` 映射不代表支持 POP3S。为兼容常见邮件客户端，服务支持 `CAPA`、`NOOP`、`RSET` 和 `TOP`；客户端必须关闭“从服务器删除邮件”，网关对 `DELE` 返回只读错误。
 
 ## 7. 幂等键和重试
 

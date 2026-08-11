@@ -64,7 +64,7 @@ const userNavItems = [
 const userPageMeta: Record<UserPageKey, { title: string; description: string }> = {
   overview: { title: "账户概览", description: "查看当前账户状态、积分和邮箱接入准备情况" },
   apiKeys: { title: "我的调用密钥", description: "管理用于调用网关业务 API 的用户级 X-API-Key" },
-  authCode: { title: "我的 POP 授权码", description: "查看和管理 POP3 110 的完整连接参数" },
+  authCode: { title: "我的 POP 授权码", description: "查看和管理 POP3 的完整连接参数" },
   credits: { title: "我的积分", description: "查看余额和最近的积分变更摘要" },
   mailboxes: { title: "我的邮箱", description: "查看当前账户创建的邮箱及其生命周期状态" },
   security: { title: "账号安全", description: "修改登录密码、撤销会话并安全退出用户中心" },
@@ -304,7 +304,7 @@ function OverviewPage({ user, onNavigate }: { user: UserProfile; onNavigate: (pa
         <Card><Statistic title="POP 授权码" value={configured ? "已配置" : "未配置"} prefix={<SafetyCertificateOutlined />} /></Card>
       </div>
       <Card className="user-preflight-card" title="开始使用前的三项准备">
-        <div className={`preflight-item ${configured ? "done" : ""}`}><span>01</span><CheckCircleOutlined /><div><b>生成用户级 POP 授权码</b><small>{configured ? "已配置，可查看完整 POP3 连接参数" : "邮件客户端连接 POP3 110 时需要"}</small></div><Button type="link" onClick={() => onNavigate("authCode")}>{configured ? "查看" : "去生成"}</Button></div>
+        <div className={`preflight-item ${configured ? "done" : ""}`}><span>01</span><CheckCircleOutlined /><div><b>生成用户级 POP 授权码</b><small>{configured ? "已配置，可查看完整 POP3 连接参数" : "邮件客户端连接 POP3 时需要"}</small></div><Button type="link" onClick={() => onNavigate("authCode")}>{configured ? "查看" : "去生成"}</Button></div>
         <div className="preflight-item"><span>02</span><KeyOutlined /><div><b>创建自己的 X-API-Key</b><small>调用 POST /v1/mailboxes 创建邮箱</small></div><Button type="link" onClick={() => onNavigate("apiKeys")}>去管理</Button></div>
         <div className="preflight-item"><span>03</span><WalletOutlined /><div><b>确认积分余额</b><small>创建邮箱会按管理端配置扣除积分</small></div><Button type="link" onClick={() => onNavigate("credits")}>查看积分</Button></div>
       </Card>
@@ -404,7 +404,7 @@ function AuthCodePage({ user, onConfigured }: { user: UserProfile; onConfigured:
   const currentCode = info?.user_auth_code || info?.userAuthCode || "";
   const legacyHashOnly = Boolean(info?.legacy_hash_only ?? info?.legacyHashOnly);
   const popHost = info?.pop_host || info?.popHost || "pop.cloudmail.xiaoasi.xyz";
-  const popPort = info?.pop_port || info?.popPort || 110;
+  const popPort = info?.pop_port || info?.popPort || 18110;
   const mailboxes = info?.mailboxes || [];
 
   const generate = async () => {
@@ -419,16 +419,42 @@ function AuthCodePage({ user, onConfigured }: { user: UserProfile; onConfigured:
     finally { setSaving(false); }
   };
 
+  const copyConnectionValue = async (label: string, value: string) => {
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(value);
+      message.success(`${label}已复制`);
+    } catch {
+      message.error("复制失败，请手动复制");
+    }
+  };
+
   return <>
     <div className="user-auth-grid">
       <Card className="user-secret-card" title={<span><SafetyCertificateOutlined /> POP3 连接信息</span>}>
         <div className={`auth-status ${configured ? "ready" : "not-ready"}`}><span className="auth-status-dot" /><div><b>{configured ? "授权码已配置" : "尚未配置授权码"}</b><small>{legacyHashOnly ? "当前是旧版哈希授权码，重置一次后即可长期查看明文。" : configured ? "以下连接参数已自动读取，可直接复制到 POP3 客户端。" : "生成授权码并创建邮箱后即可连接 POP3。"}</small></div></div>
-        <Descriptions column={1} size="small" className="auth-connection-info">
-          <Descriptions.Item label="POP 主机">{loading ? <Spin size="small" /> : <Text className="connection-code" code copyable={{ text: popHost }}>{popHost}</Text>}</Descriptions.Item>
-          <Descriptions.Item label="端口"><Text className="connection-code" code copyable={{ text: String(popPort) }}>{popPort}</Text></Descriptions.Item>
-          <Descriptions.Item label="用户名">{mailboxes.length ? <Space size={6} wrap><Select className="connection-mailbox-select" value={selectedMailbox} onChange={setSelectedMailbox} options={mailboxes.map((address) => ({ value: address, label: address }))} popupMatchSelectWidth={false} /><Button className="connection-copy-button" type="text" icon={<CopyOutlined />} onClick={() => void navigator.clipboard?.writeText(selectedMailbox)}>复制</Button></Space> : <span className="connection-placeholder">暂无可用邮箱，请先创建邮箱</span>}</Descriptions.Item>
-          <Descriptions.Item label="密码">{currentCode ? <Text className="connection-code" code copyable={{ text: currentCode }}>{currentCode}</Text> : <span className="connection-placeholder">{legacyHashOnly ? "旧授权码无法反推，请点击右侧重置" : "尚未生成授权码"}</span>}</Descriptions.Item>
-        </Descriptions>
+        <div className="auth-connection-info">
+          <div className="auth-connection-row">
+            <span className="connection-label">POP 主机</span>
+            <div className="connection-value">{loading ? <Spin size="small" /> : <code title={popHost}>{popHost}</code>}</div>
+            <Button className="connection-copy-button" type="text" size="small" icon={<CopyOutlined />} disabled={loading} onClick={() => void copyConnectionValue("POP 主机", popHost)}>复制</Button>
+          </div>
+          <div className="auth-connection-row">
+            <span className="connection-label">端口</span>
+            <div className="connection-value"><code>{popPort}</code></div>
+            <Button className="connection-copy-button" type="text" size="small" icon={<CopyOutlined />} onClick={() => void copyConnectionValue("端口", String(popPort))}>复制</Button>
+          </div>
+          <div className="auth-connection-row">
+            <span className="connection-label">用户名</span>
+            <div className="connection-value connection-select-value">{mailboxes.length ? <Select className="connection-mailbox-select" value={selectedMailbox} onChange={setSelectedMailbox} options={mailboxes.map((address) => ({ value: address, label: address }))} /> : <span className="connection-placeholder">暂无可用邮箱，请先创建邮箱</span>}</div>
+            <Button className="connection-copy-button" type="text" size="small" icon={<CopyOutlined />} disabled={!selectedMailbox} onClick={() => void copyConnectionValue("用户名", selectedMailbox)}>复制</Button>
+          </div>
+          <div className="auth-connection-row">
+            <span className="connection-label">密码</span>
+            <div className="connection-value">{currentCode ? <code title={currentCode}>{currentCode}</code> : <span className="connection-placeholder">{legacyHashOnly ? "旧授权码无法反推，请点击右侧重置" : "尚未生成授权码"}</span>}</div>
+            <Button className="connection-copy-button" type="text" size="small" icon={<CopyOutlined />} disabled={!currentCode} onClick={() => void copyConnectionValue("密码", currentCode)}>复制</Button>
+          </div>
+        </div>
       </Card>
       <Card className="user-auth-action-card" title={configured ? "重置 userAuthCode" : "生成 userAuthCode"}>
         <Alert className="form-alert" type={configured ? "warning" : "info"} showIcon message={configured ? "重置后旧授权码立即失效" : "授权码用于该用户全部邮箱的 POP3 登录"} description={legacyHashOnly ? "旧授权码只有哈希值，无法回显；重置后新值会长期保存在本页。" : "授权码会保存并长期显示，之后登录仍可查看和复制。"} />
@@ -587,7 +613,7 @@ function UserConsole({ user, onUnauthorized }: { user: UserProfile; onUnauthoriz
   };
 
   const navigate = (key: string) => { setPage(key as UserPageKey); setMobileOpen(false); };
-  const sidebar = <><div className="console-brand user-console-brand"><div className="brand-mark"><UserOutlined /></div>{!collapsed && <div><b>Xiaoasi Mail</b><span>User Center</span></div>}</div><Menu theme="dark" mode="inline" selectedKeys={[page]} items={userNavItems} onClick={({ key }) => navigate(key)} /><div className="sider-footer"><div>{!collapsed && <span>USER CENTER<br />POP3 / 110</span>}</div><TooltipLogout onLogout={logout} loading={loggingOut} /></div></>;
+  const sidebar = <><div className="console-brand user-console-brand"><div className="brand-mark"><UserOutlined /></div>{!collapsed && <div><b>Xiaoasi Mail</b><span>User Center</span></div>}</div><Menu theme="dark" mode="inline" selectedKeys={[page]} items={userNavItems} onClick={({ key }) => navigate(key)} /><div className="sider-footer"><div>{!collapsed && <span>USER CENTER<br />POP3 / 18110</span>}</div><TooltipLogout onLogout={logout} loading={loggingOut} /></div></>;
 
   return <Layout className="console-layout user-console-layout">
     <Sider className="desktop-sider user-sider" width={244} collapsedWidth={78} collapsed={collapsed} trigger={null}>{sidebar}</Sider>

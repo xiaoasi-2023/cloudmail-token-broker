@@ -185,6 +185,7 @@ def test_user_pop_auth_code_is_stored_and_returned_as_plaintext(tmp_path: Path) 
     settings = replace(
         gateway_settings(tmp_path),
         pop3_public_host="pop.example.com",
+        pop3_public_port=18110,
     )
     app = create_app(settings)
     user = app.state.user_repository.create_user(
@@ -214,7 +215,7 @@ def test_user_pop_auth_code_is_stored_and_returned_as_plaintext(tmp_path: Path) 
         "legacy_hash_only": False,
         "updated_at": loaded.json()["data"]["updated_at"],
         "pop_host": "pop.example.com",
-        "pop_port": 110,
+        "pop_port": 18110,
         "mailboxes": [],
     }
     assert app.state.user_repository.verify_user_pop_auth_code(

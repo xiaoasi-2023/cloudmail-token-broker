@@ -21,6 +21,7 @@ class UserApiContext:
     registration_enabled: bool = False
     registration: UserRegistrationService | None = None
     pop3_public_host: str = "pop.cloudmail.xiaoasi.xyz"
+    pop3_public_port: int = 18110
 
 
 class UserLoginRequest(BaseModel):
@@ -94,7 +95,7 @@ def create_user_router(context: UserApiContext) -> APIRouter:
         return {
             **data,
             "pop_host": context.pop3_public_host,
-            "pop_port": 110,
+            "pop_port": context.pop3_public_port,
             "mailboxes": [str(item["address"]) for item in mailboxes if item.get("address")],
         }
 

@@ -58,6 +58,7 @@ class Settings:
     pop3_bind_host: str = "0.0.0.0"
     pop3_port: int = 8110
     pop3_public_host: str = "pop.cloudmail.xiaoasi.xyz"
+    pop3_public_port: int = 18110
     pop3_max_connections: int = 100
     pop3_max_auth_failures: int = 3
     pop3_max_messages: int = 20
@@ -109,6 +110,7 @@ class Settings:
             pop3_port=_int_env("POP3_PORT", 8110, 0, 65535),
             pop3_public_host=_env("POP3_PUBLIC_HOST", "pop.cloudmail.xiaoasi.xyz")
             or "pop.cloudmail.xiaoasi.xyz",
+            pop3_public_port=_int_env("POP3_PUBLIC_PORT", 18110, 1, 65535),
             pop3_max_connections=_int_env("POP3_MAX_CONNECTIONS", 100, 1, 10000),
             pop3_max_auth_failures=_int_env("POP3_MAX_AUTH_FAILURES", 3, 1, 20),
             pop3_max_messages=_int_env("POP3_MAX_MESSAGES", 20, 1, 1000),
