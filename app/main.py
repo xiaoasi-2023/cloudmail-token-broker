@@ -27,8 +27,13 @@ from app.gateway.business_models import CloudMailInstanceConfig
 from app.gateway.cloudmail_provider import CloudMailProviderRegistry
 from app.gateway.mailbox_service import MailboxGatewayService
 from app.gateway.mailbox_token import MailboxTokenSigner
+from app.gateway.pop3_provider import Pop3GatewayProvider
+from app.gateway.pop3_server import Pop3Server
 from app.gateway.public_api import create_gateway_router
 from app.gateway.database_business_store import DatabaseGatewayBusinessStore
+from app.gateway.user_api import UserApiContext, create_user_router
+from app.gateway.user_auth import UserSessionService
+from app.gateway.user_repository import UserRepository
 from app.rate_limit import InMemoryRateLimiter
 
 
@@ -45,15 +50,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     rate_limiter = InMemoryRateLimiter()
 
     gateway_repository: GatewayRepository | None = None
+    database: GatewayDatabase | None = None
     gateway_providers: CloudMailProviderRegistry | None = None
     gateway_router = None
     admin_router = None
+    user_router = None
+    user_repository: UserRepository | None = None
+    pop3_server: Pop3Server | None = None
 
     if resolved_settings.gateway_enabled:
         database = GatewayDatabase(resolved_settings.database_url)
         database.initialize()
         cipher = FernetSecretCipher(resolved_settings.data_encryption_key)
         gateway_repository = GatewayRepository(database, cipher)
+        password_hash = resolved_settings.admin_password_hash or hash_admin_password(
+            resolved_settings.admin_password
+        )
+        user_repository = UserRepository(database)
+        user_repository.ensure_admin(resolved_settings.admin_username, password_hash)
+        user_sessions = UserSessionService(
+            database,
+            user_repository,
+            ttl_seconds=resolved_settings.user_session_ttl_seconds,
+        )
+        user_router = create_user_router(
+            UserApiContext(
+                users=user_repository,
+                sessions=user_sessions,
+                cookie_secure=resolved_settings.admin_cookie_secure,
+                registration_enabled=resolved_settings.user_registration_enabled,
+            )
+        )
         business_store = DatabaseGatewayBusinessStore(database, cipher)
         gateway_providers = CloudMailProviderRegistry()
         gateway_service = MailboxGatewayService(
@@ -62,10 +89,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             MailboxTokenSigner(resolved_settings.mailbox_session_secret),
             mailbox_ttl_seconds=resolved_settings.mailbox_session_ttl_seconds,
         )
-        gateway_router = create_gateway_router(gateway_service, gateway_repository.authenticate_client_key)
-        password_hash = resolved_settings.admin_password_hash or hash_admin_password(
-            resolved_settings.admin_password
-        )
+        if resolved_settings.pop3_enabled:
+            pop3_provider = Pop3GatewayProvider(
+                database,
+                user_repository,
+                business_store,
+                gateway_providers,
+            )
+            pop3_server = Pop3Server(
+                pop3_provider.authenticate,
+                pop3_provider.resolve_mailbox,
+                pop3_provider,
+                host=resolved_settings.pop3_bind_host,
+                port=resolved_settings.pop3_port,
+                max_connections=resolved_settings.pop3_max_connections,
+                max_auth_failures=resolved_settings.pop3_max_auth_failures,
+                max_messages=resolved_settings.pop3_max_messages,
+            )
+        gateway_router = create_gateway_router(gateway_service, user_repository.authenticate_api_key)
         sessions = AdminSessionService(
             database,
             resolved_settings.admin_username,
@@ -98,6 +139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             AdminApiContext(
                 repository=gateway_repository,
                 sessions=sessions,
+                users=user_repository,
                 instance_test_hook=test_instance,
                 cookie_secure=resolved_settings.admin_cookie_secure,
             )
@@ -105,9 +147,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        yield
-        if gateway_providers is not None:
-            await gateway_providers.close()
+        try:
+            if pop3_server is not None:
+                await pop3_server.start()
+                logger.info("pop3_server_started host=%s port=%s", pop3_server.host, pop3_server.port)
+            yield
+        finally:
+            if pop3_server is not None:
+                await pop3_server.close()
+                logger.info("pop3_server_stopped")
+            if gateway_providers is not None:
+                await gateway_providers.close()
+            if database is not None:
+                database.dispose()
 
     app = FastAPI(
         title="Xiaoasi Mail Gateway",
@@ -119,6 +171,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved_settings
     app.state.gateway_repository = gateway_repository
+    app.state.user_repository = user_repository
+    app.state.pop3_server = pop3_server
 
     @app.exception_handler(GatewayBusinessError)
     async def gateway_error_handler(_request: Request, exc: GatewayBusinessError):
@@ -129,6 +183,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     if gateway_router is not None:
         app.include_router(gateway_router)
+    if user_router is not None:
+        app.include_router(user_router)
     if admin_router is not None:
         app.include_router(admin_router)
 
@@ -191,6 +247,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ok": True,
             "service": "xiaoasi-mail-gateway",
             "gatewayEnabled": resolved_settings.gateway_enabled,
+            "pop3Enabled": pop3_server is not None,
+            "pop3Listening": pop3_server is not None and pop3_server.server is not None,
         }
 
     @app.get("/")
@@ -202,5 +260,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     static_path = Path(resolved_settings.admin_static_dir)
     if resolved_settings.gateway_enabled and static_path.is_dir():
         app.mount("/admin", StaticFiles(directory=static_path, html=True), name="gateway-admin")
+        app.mount("/user", StaticFiles(directory=static_path, html=True), name="gateway-user")
 
     return app

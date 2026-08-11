@@ -1,11 +1,14 @@
 import type {
+  AdminUser,
   CloudMailInstance,
-  ClientKey,
+  CreditAdjustResult,
+  CreditRule,
   DomainPayload,
   InstancePayload,
   MailboxRecord,
   MailDomain,
   Overview,
+  PopAuthCodeResult,
   RequestLog,
 } from "./types";
 
@@ -77,11 +80,6 @@ export const api = {
     request<ApiEnvelope<MailDomain>>(`/domains/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteDomain: (id: number) => request(`/domains/${id}`, { method: "DELETE" }),
   clearDomainCooldown: (id: number) => request(`/domains/${id}/clear-cooldown`, { method: "POST" }),
-  clientKeys: async () => (await request<ApiEnvelope<ClientKey[]>>("/client-keys")).data,
-  createClientKey: (name: string) => request<ApiEnvelope<ClientKey>>("/client-keys", { method: "POST", body: JSON.stringify({ name }) }),
-  updateClientKey: (id: number, enabled: boolean) => request<ApiEnvelope<ClientKey>>(`/client-keys/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
-  regenerateClientKey: (id: number) => request<ApiEnvelope<ClientKey>>(`/client-keys/${id}/regenerate`, { method: "POST" }),
-  deleteClientKey: (id: number) => request(`/client-keys/${id}`, { method: "DELETE" }),
   mailboxes: async (limit = 100, offset = 0, keyword = "", purpose = "") => {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (keyword.trim()) params.set("keyword", keyword.trim());
@@ -90,4 +88,19 @@ export const api = {
   },
   requestLogs: async (limit = 100, offset = 0) =>
     (await request<ApiEnvelope<RequestLog[]>>(`/request-logs?limit=${limit}&offset=${offset}`)).data,
+  users: async () => (await request<ApiEnvelope<AdminUser[]>>("/users")).data,
+  updateUser: (id: number, enabled: boolean) =>
+    request<ApiEnvelope<AdminUser>>(`/users/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),
+  resetUserAuthCode: (id: number) =>
+    request<ApiEnvelope<{ user_id: number; configured: boolean }>>(`/users/${id}/reset-auth-code`, { method: "POST" }),
+  adjustUserCredits: (id: number, amount: number, reason: string) =>
+    request<ApiEnvelope<CreditAdjustResult>>(`/users/${id}/credits/adjust`, {
+      method: "POST",
+      body: JSON.stringify({ amount, reason }),
+    }),
+  creditRules: async () => (await request<ApiEnvelope<CreditRule>>("/credit-rules")).data,
+  updateCreditRules: async (data: Pick<CreditRule, "cost_points" | "initial_user_points">) =>
+    (await request<ApiEnvelope<CreditRule>>("/credit-rules", { method: "PUT", body: JSON.stringify(data) })).data,
+  setAdminPopAuthCode: (authCode: string) =>
+    request<ApiEnvelope<PopAuthCodeResult>>("/pop-auth-code", { method: "PUT", body: JSON.stringify({ auth_code: authCode }) }),
 };

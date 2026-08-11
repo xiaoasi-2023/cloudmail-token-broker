@@ -43,6 +43,14 @@ class Settings:
     admin_session_ttl_seconds: int = 28800
     admin_cookie_secure: bool = True
     admin_login_rate_limit_per_minute: int = 10
+    user_session_ttl_seconds: int = 28800
+    user_registration_enabled: bool = False
+    pop3_enabled: bool = True
+    pop3_bind_host: str = "0.0.0.0"
+    pop3_port: int = 8110
+    pop3_max_connections: int = 100
+    pop3_max_auth_failures: int = 3
+    pop3_max_messages: int = 20
     admin_static_dir: str = "admin-web/dist"
 
     @classmethod
@@ -69,6 +77,14 @@ class Settings:
             admin_login_rate_limit_per_minute=_int_env(
                 "ADMIN_LOGIN_RATE_LIMIT_PER_MINUTE", 10, 1, 1000
             ),
+            user_session_ttl_seconds=_int_env("USER_SESSION_TTL_SECONDS", 28800, 300, 604800),
+            user_registration_enabled=_bool_env("USER_REGISTRATION_ENABLED", False),
+            pop3_enabled=_bool_env("POP3_ENABLED", True),
+            pop3_bind_host=_env("POP3_BIND_HOST", "0.0.0.0") or "0.0.0.0",
+            pop3_port=_int_env("POP3_PORT", 8110, 0, 65535),
+            pop3_max_connections=_int_env("POP3_MAX_CONNECTIONS", 100, 1, 10000),
+            pop3_max_auth_failures=_int_env("POP3_MAX_AUTH_FAILURES", 3, 1, 20),
+            pop3_max_messages=_int_env("POP3_MAX_MESSAGES", 20, 1, 1000),
             admin_static_dir=_env("ADMIN_STATIC_DIR", "admin-web/dist"),
         )
         settings.validate()

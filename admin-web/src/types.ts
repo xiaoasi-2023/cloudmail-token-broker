@@ -71,14 +71,40 @@ export interface RequestLog {
   created_at: string;
 }
 
-export interface ClientKey {
+export interface AdminUser {
   id: number;
-  name: string;
-  api_key: string;
-  enabled: boolean;
-  last_used_at?: string | null;
+  username: string;
+  email?: string | null;
+  role: "admin" | "user" | string;
+  status: string;
+  pop_enabled: boolean;
+  credit_balance: number;
+  api_key_count?: number;
+  has_user_auth_code: boolean;
+  has_admin_pop_auth_code: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface CreditRule {
+  operation: string;
+  cost_points: number;
+  initial_user_points: number;
+  updated_by?: number | null;
+  updated_at?: string | null;
+}
+
+export interface CreditAdjustResult {
+  user_id: number;
+  amount: number;
+  balance_after: number;
+  transaction_id: number;
+  remark: string;
+}
+
+export interface PopAuthCodeResult {
+  configured: boolean;
+  admin_pop_auth_code: string;
 }
 
 export interface InstancePayload {

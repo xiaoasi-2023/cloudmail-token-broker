@@ -130,26 +130,6 @@ def test_domain_list_supports_empty_and_instance_filter(tmp_path: Path) -> None:
     assert filtered.json()["data"][0]["instance_name"] == "instance-a"
 
 
-def test_client_key_crud_and_authentication(tmp_path: Path) -> None:
-    client, repository = build_client(tmp_path)
-    login(client)
-
-    created = client.post("/admin-api/client-keys", json={"name": "image2api"})
-    item = created.json()["data"]
-    assert created.status_code == 201
-    assert item["api_key"].startswith("xmk_")
-    assert repository.authenticate_client_key(item["api_key"])["name"] == "image2api"
-
-    disabled = client.patch(f"/admin-api/client-keys/{item['id']}", json={"enabled": False})
-    assert disabled.json()["data"]["enabled"] is False
-    assert repository.authenticate_client_key(item["api_key"]) is None
-
-    regenerated = client.post(f"/admin-api/client-keys/{item['id']}/regenerate").json()["data"]
-    assert regenerated["api_key"] != item["api_key"]
-    deleted = client.delete(f"/admin-api/client-keys/{item['id']}")
-    assert deleted.status_code == 200
-
-
 def test_parallel_admin_reads_do_not_trigger_sqlite_write_conflicts(tmp_path: Path) -> None:
     client, repository = build_client(tmp_path)
     login(client)

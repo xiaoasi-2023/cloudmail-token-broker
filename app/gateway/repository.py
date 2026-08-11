@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import secrets
 from datetime import UTC, datetime
 from typing import Any
 
@@ -52,63 +51,6 @@ class GatewayRepository:
             instance_id = int(inserted.fetchone()["id"])
             row = connection.execute("SELECT * FROM cloudmail_instances WHERE id = ?", (instance_id,)).fetchone()
         return _public_instance(row)
-
-    def create_client_key(self, name: str) -> dict[str, Any]:
-        now = utc_now()
-        api_key = "xmk_" + secrets.token_urlsafe(32)
-        with self.database.transaction() as connection:
-            inserted = connection.execute(
-                """INSERT INTO gateway_client_keys(name, api_key, enabled, created_at, updated_at)
-                VALUES (?, ?, 1, ?, ?) RETURNING id""",
-                (name.strip(), api_key, now, now),
-            )
-            key_id = int(inserted.fetchone()["id"])
-            row = connection.execute("SELECT * FROM gateway_client_keys WHERE id=?", (key_id,)).fetchone()
-        return dict(row)
-
-    def list_client_keys(self) -> list[dict[str, Any]]:
-        with self.database.read() as connection:
-            rows = connection.execute("SELECT * FROM gateway_client_keys ORDER BY id").fetchall()
-        return [{**dict(row), "enabled": bool(row["enabled"])} for row in rows]
-
-    def update_client_key(self, key_id: int, *, enabled: bool) -> dict[str, Any] | None:
-        with self.database.transaction() as connection:
-            connection.execute(
-                "UPDATE gateway_client_keys SET enabled=?, updated_at=? WHERE id=?",
-                (int(enabled), utc_now(), key_id),
-            )
-            row = connection.execute("SELECT * FROM gateway_client_keys WHERE id=?", (key_id,)).fetchone()
-        return {**dict(row), "enabled": bool(row["enabled"])} if row else None
-
-    def regenerate_client_key(self, key_id: int) -> dict[str, Any] | None:
-        api_key = "xmk_" + secrets.token_urlsafe(32)
-        with self.database.transaction() as connection:
-            connection.execute(
-                "UPDATE gateway_client_keys SET api_key=?, updated_at=? WHERE id=?",
-                (api_key, utc_now(), key_id),
-            )
-            row = connection.execute("SELECT * FROM gateway_client_keys WHERE id=?", (key_id,)).fetchone()
-        return {**dict(row), "enabled": bool(row["enabled"])} if row else None
-
-    def delete_client_key(self, key_id: int) -> bool:
-        with self.database.transaction() as connection:
-            result = connection.execute("DELETE FROM gateway_client_keys WHERE id=?", (key_id,))
-        return result.rowcount > 0
-
-    def authenticate_client_key(self, api_key: str) -> dict[str, Any] | None:
-        if not api_key:
-            return None
-        with self.database.transaction() as connection:
-            row = connection.execute(
-                "SELECT * FROM gateway_client_keys WHERE api_key=? AND enabled=1",
-                (api_key,),
-            ).fetchone()
-            if row:
-                connection.execute(
-                    "UPDATE gateway_client_keys SET last_used_at=? WHERE id=?",
-                    (utc_now(), row["id"]),
-                )
-        return dict(row) if row else None
 
     def list_instances(self) -> list[dict[str, Any]]:
         with self.database.read() as connection:

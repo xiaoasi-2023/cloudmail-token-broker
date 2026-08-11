@@ -10,6 +10,7 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8788:8080"
+      - "110:8110"
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -17,10 +18,12 @@ services:
       - /tmp:size=16m,mode=1777
     healthcheck:
       test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"
+        - CMD-SHELL
+        - >-
+          python -c "import json, socket, urllib.request;
+          body=json.load(urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3));
+          assert body.get('pop3Enabled') is False or body.get('pop3Listening') is True;
+          socket.create_connection(('127.0.0.1', 8110), timeout=3).close() if body.get('pop3Enabled') else None"
       interval: 30s
       timeout: 5s
       retries: 3

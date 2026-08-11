@@ -10,6 +10,7 @@ from app.gateway.business_models import (
 )
 from app.gateway.crypto import SecretCipher
 from app.gateway.database import GatewayDatabase
+from app.gateway.user_repository import UserRepository
 
 
 def _now() -> datetime:
@@ -38,6 +39,7 @@ class DatabaseGatewayBusinessStore:
         self.cipher = cipher
         self.domain_failure_threshold = max(1, domain_failure_threshold)
         self.domain_cooldown_seconds = max(1, domain_cooldown_seconds)
+        self.users = UserRepository(database)
 
     def list_domains(self) -> list[MailDomainConfig]:
         with self.database.read() as connection:
@@ -98,6 +100,7 @@ class DatabaseGatewayBusinessStore:
             provider_reference=str(row["provider_reference"]),
             created_at=created_at,
             expires_at=expires_at,
+            owner_user_id=int(row["owner_user_id"]) if row["owner_user_id"] is not None else None,
         )
 
     def save_mailbox(
@@ -109,13 +112,14 @@ class DatabaseGatewayBusinessStore:
         with self.database.transaction() as connection:
             connection.execute(
                 """INSERT INTO mailboxes
-                (id, address, domain_id, instance_id, purpose, source, status,
+                (id, address, owner_user_id, domain_id, instance_id, purpose, source, status,
                  verification_status, verification_code, provider_reference,
                  created_at, expires_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     mailbox.id,
                     mailbox.address,
+                    mailbox.owner_user_id,
                     mailbox.domain_id,
                     mailbox.instance_id,
                     mailbox.purpose,
@@ -132,10 +136,11 @@ class DatabaseGatewayBusinessStore:
             if idempotency:
                 connection.execute(
                     """INSERT INTO idempotency_records
-                    (idempotency_key, request_hash, mailbox_id, created_at, expires_at)
-                    VALUES (?, ?, ?, ?, ?)""",
+                    (idempotency_key, user_id, request_hash, mailbox_id, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?)""",
                     (
                         idempotency.key,
+                        idempotency.user_id,
                         idempotency.request_hash,
                         idempotency.mailbox_id,
                         now,
@@ -161,6 +166,7 @@ class DatabaseGatewayBusinessStore:
             request_hash=str(row["request_hash"]),
             mailbox_id=str(row["mailbox_id"]),
             expires_at=expires_at,
+            user_id=int(row["user_id"]) if row["user_id"] is not None else None,
         )
 
     def mark_domain_success(self, domain_id: int) -> None:
@@ -222,3 +228,12 @@ class DatabaseGatewayBusinessStore:
                 "UPDATE mailboxes SET status=?, updated_at=? WHERE id=?",
                 (status, _now().isoformat(), mailbox_id),
             )
+
+    def reserve_mailbox_credit(self, user_id: int, reference_id: str) -> int:
+        return self.users.reserve_mailbox_credit(user_id, reference_id)
+
+    def confirm_mailbox_credit(self, user_id: int, reference_id: str) -> None:
+        self.users.confirm_mailbox_credit(user_id, reference_id)
+
+    def refund_mailbox_credit(self, user_id: int, reference_id: str) -> None:
+        self.users.refund_mailbox_credit(user_id, reference_id)

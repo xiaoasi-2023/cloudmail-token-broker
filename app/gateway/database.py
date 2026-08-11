@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -188,6 +189,7 @@ class GatewayDatabase:
                 CREATE TABLE IF NOT EXISTS mailboxes (
                     id TEXT PRIMARY KEY,
                     address TEXT NOT NULL UNIQUE,
+                    owner_user_id BIGINT,
                     domain_id BIGINT NOT NULL REFERENCES mail_domains(id),
                     instance_id BIGINT NOT NULL REFERENCES cloudmail_instances(id),
                     purpose TEXT NOT NULL DEFAULT '',
@@ -196,6 +198,7 @@ class GatewayDatabase:
                     verification_status TEXT NOT NULL DEFAULT 'pending',
                     verification_code TEXT NOT NULL DEFAULT '',
                     provider_reference TEXT NOT NULL DEFAULT '',
+                    pop_enabled INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL,
                     expires_at TEXT,
                     updated_at TEXT NOT NULL
@@ -203,8 +206,11 @@ class GatewayDatabase:
 
                 CREATE TABLE IF NOT EXISTS idempotency_records (
                     idempotency_key TEXT PRIMARY KEY,
+                    user_id BIGINT,
                     request_hash TEXT NOT NULL,
+                    request_fingerprint TEXT NOT NULL DEFAULT '',
                     mailbox_id TEXT NOT NULL REFERENCES mailboxes(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'completed',
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL
                 );
@@ -215,6 +221,7 @@ class GatewayDatabase:
                     endpoint TEXT NOT NULL,
                     method TEXT NOT NULL,
                     source TEXT NOT NULL DEFAULT '',
+                    user_id BIGINT,
                     mailbox_id TEXT,
                     instance_id BIGINT,
                     domain_id BIGINT,
@@ -235,22 +242,78 @@ class GatewayDatabase:
 
                 CREATE TABLE IF NOT EXISTS admin_audit_logs (
                     id {id_definition},
+                    admin_user_id BIGINT,
                     username TEXT NOT NULL,
                     action TEXT NOT NULL,
                     target_type TEXT NOT NULL DEFAULT '',
                     target_id TEXT NOT NULL DEFAULT '',
                     detail TEXT NOT NULL DEFAULT '',
+                    request_id TEXT NOT NULL DEFAULT '',
+                    source_ip TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS gateway_client_keys (
+                CREATE TABLE IF NOT EXISTS users (
                     id {id_definition},
-                    name TEXT NOT NULL UNIQUE,
-                    api_key TEXT NOT NULL UNIQUE,
+                    username TEXT NOT NULL UNIQUE,
+                    email TEXT UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin', 'user')),
+                    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
+                    user_auth_code_hash TEXT,
+                    user_auth_code_updated_at TEXT,
+                    admin_pop_auth_code_hash TEXT,
+                    admin_pop_auth_code_updated_at TEXT,
+                    pop_enabled INTEGER NOT NULL DEFAULT 1,
+                    pop_failed_attempts INTEGER NOT NULL DEFAULT 0,
+                    pop_locked_until TEXT,
+                    last_pop_login_at TEXT,
+                    credit_balance BIGINT NOT NULL DEFAULT 0 CHECK(credit_balance >= 0),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_api_keys (
+                    id {id_definition},
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    key_prefix TEXT NOT NULL,
+                    key_hash TEXT NOT NULL UNIQUE,
                     enabled INTEGER NOT NULL DEFAULT 1,
                     last_used_at TEXT,
                     created_at TEXT NOT NULL,
+                    revoked_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    session_hash TEXT PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL CHECK(role IN ('admin', 'user')),
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    revoked_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS credit_rules (
+                    operation TEXT PRIMARY KEY,
+                    cost_points BIGINT NOT NULL DEFAULT 0 CHECK(cost_points >= 0),
+                    initial_user_points BIGINT NOT NULL DEFAULT 0 CHECK(initial_user_points >= 0),
+                    updated_by BIGINT REFERENCES users(id),
                     updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS credit_transactions (
+                    id {id_definition},
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    type TEXT NOT NULL CHECK(type IN ('consume', 'refund', 'admin_adjust')),
+                    status TEXT NOT NULL CHECK(status IN ('pending', 'completed', 'reversed')),
+                    amount BIGINT NOT NULL,
+                    balance_after BIGINT NOT NULL CHECK(balance_after >= 0),
+                    reference_type TEXT NOT NULL DEFAULT '',
+                    reference_id TEXT NOT NULL DEFAULT '',
+                    remark TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
                 );
                 """
             )
@@ -268,6 +331,33 @@ class GatewayDatabase:
                 connection.execute(
                     "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS verification_code TEXT NOT NULL DEFAULT ''"
                 )
+                connection.execute(
+                    "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS owner_user_id BIGINT"
+                )
+                connection.execute(
+                    "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS pop_enabled INTEGER NOT NULL DEFAULT 1"
+                )
+                connection.execute(
+                    "ALTER TABLE idempotency_records ADD COLUMN IF NOT EXISTS user_id BIGINT"
+                )
+                connection.execute(
+                    "ALTER TABLE idempotency_records ADD COLUMN IF NOT EXISTS request_fingerprint TEXT NOT NULL DEFAULT ''"
+                )
+                connection.execute(
+                    "ALTER TABLE idempotency_records ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed'"
+                )
+                connection.execute(
+                    "ALTER TABLE gateway_request_logs ADD COLUMN IF NOT EXISTS user_id BIGINT"
+                )
+                connection.execute(
+                    "ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS admin_user_id BIGINT"
+                )
+                connection.execute(
+                    "ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS request_id TEXT NOT NULL DEFAULT ''"
+                )
+                connection.execute(
+                    "ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS source_ip TEXT NOT NULL DEFAULT ''"
+                )
             else:
                 mailbox_columns = {
                     str(row["name"])
@@ -277,6 +367,43 @@ class GatewayDatabase:
                     connection.execute(
                         "ALTER TABLE mailboxes ADD COLUMN verification_code TEXT NOT NULL DEFAULT ''"
                     )
+                if "owner_user_id" not in mailbox_columns:
+                    connection.execute("ALTER TABLE mailboxes ADD COLUMN owner_user_id BIGINT")
+                if "pop_enabled" not in mailbox_columns:
+                    connection.execute("ALTER TABLE mailboxes ADD COLUMN pop_enabled INTEGER NOT NULL DEFAULT 1")
+
+                idempotency_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(idempotency_records)").fetchall()
+                }
+                if "user_id" not in idempotency_columns:
+                    connection.execute("ALTER TABLE idempotency_records ADD COLUMN user_id BIGINT")
+                if "request_fingerprint" not in idempotency_columns:
+                    connection.execute(
+                        "ALTER TABLE idempotency_records ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT ''"
+                    )
+                if "status" not in idempotency_columns:
+                    connection.execute(
+                        "ALTER TABLE idempotency_records ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'"
+                    )
+
+                request_log_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(gateway_request_logs)").fetchall()
+                }
+                if "user_id" not in request_log_columns:
+                    connection.execute("ALTER TABLE gateway_request_logs ADD COLUMN user_id BIGINT")
+
+                audit_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(admin_audit_logs)").fetchall()
+                }
+                if "admin_user_id" not in audit_columns:
+                    connection.execute("ALTER TABLE admin_audit_logs ADD COLUMN admin_user_id BIGINT")
+                if "request_id" not in audit_columns:
+                    connection.execute("ALTER TABLE admin_audit_logs ADD COLUMN request_id TEXT NOT NULL DEFAULT ''")
+                if "source_ip" not in audit_columns:
+                    connection.execute("ALTER TABLE admin_audit_logs ADD COLUMN source_ip TEXT NOT NULL DEFAULT ''")
 
             connection.executescript(
                 """
@@ -284,8 +411,20 @@ class GatewayDatabase:
                 CREATE INDEX IF NOT EXISTS idx_mailboxes_created ON mailboxes(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_request_logs_created ON gateway_request_logs(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
-                CREATE INDEX IF NOT EXISTS idx_client_keys_enabled ON gateway_client_keys(enabled);
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_users_admin_role ON users(role) WHERE role='admin';
+                CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys(user_id, enabled);
+                CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_credit_transactions_user ON credit_transactions(user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_mailboxes_owner ON mailboxes(owner_user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_request_logs_user ON gateway_request_logs(user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
                 """
+            )
+            connection.execute(
+                """INSERT INTO credit_rules(operation, cost_points, initial_user_points, updated_at)
+                VALUES ('create_mailbox', 1, 0, ?)
+                ON CONFLICT(operation) DO NOTHING""",
+                (datetime.now(UTC).isoformat(),),
             )
             connection.execute("UPDATE gateway_schema SET version = ?", (SCHEMA_VERSION,))
             if current_version != SCHEMA_VERSION:

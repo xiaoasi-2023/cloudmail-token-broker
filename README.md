@@ -1,42 +1,42 @@
 # Xiaoasi Mail Gateway
 
-Xiaoasi Mail Gateway 是一个支持多 CloudMail 实例、多邮箱域名和可视化管理端的统一邮箱网关。
+Xiaoasi Mail Gateway 是一个统一邮箱网关，负责管理多个 CloudMail 实例、邮箱域名、用户、调用密钥、积分和 POP3 邮件访问。
 
-图片站、Kirox、Windows EXE 和其他调用方只调用网关的创建邮箱、查询验证码接口，不再保存 CloudMail 管理员账号、密码和 Token，也不需要理解 `genToken`、`addUser`、`emailList` 等内部接口。
+> 当前仓库已实现用户中心、积分和 POP3 `110` 监听；上线前仍需使用真实 CloudMail 环境完成验收，并按部署文档放行 `110/tcp`。`995` 不开放。
+
+图片站、Kirox、Windows EXE 和其他调用方只接入网关，不保存 CloudMail 管理员账号、密码、Token 或内部接口路径。
 
 ## 核心能力
 
-- 多个 CloudMail 实例，每个实例配置多个邮箱域名；
-- 每实例独立 Token 缓存和刷新锁，互不覆盖；
-- 支持指定单域名、指定域名范围和自动加权选择；
-- 自动生成邮箱地址和内部密码；
-- 使用 `Idempotency-Key` 避免网络重试重复建箱；
-- 创建邮箱后返回短期、单邮箱范围的 `mailboxToken`；
-- 统一查询 OpenAI、Grok 等验证码；
-- 服务器 PostgreSQL 持久化实例、域名、邮箱、请求日志和管理会话；
-- CloudMail 管理员密码加密保存；
-- React + Ant Design 管理端；
-- 提供 dry-run/apply 数据保留清理脚本。
+- 多个 CloudMail 实例和多个邮箱域名；
+- 自动、指定单域名和候选域名创建邮箱；
+- 用户中心、用户级 `X-API-Key` 和用户级 `userAuthCode`；
+- 创建邮箱按管理端配置扣除积分；
+- 唯一管理员管理全部用户、邮箱、日志、实例、域名和积分；
+- 管理员独立 POP 授权码，可以读取全部未物理删除且上游仍存在的邮箱；
+- 固定 POP3 `110` 端口只读取信，不开放 `995`；
+- `Idempotency-Key` 幂等创建和短期 `mailboxToken`；
+- 统一验证码查询和 CloudMail Provider 适配；
+- PostgreSQL 持久化和一次性旧数据清理迁移。
 
 ## 调用链
 
 ```text
-图片站 / Kirox / EXE
-        |
-        | POST /v1/mailboxes
-        v
-Xiaoasi Mail Gateway
-        |
-        | 选择域名及所属实例
-        | 获取该实例独立 Token
-        | 调用 addUser 创建邮箱
-        v
-CloudMail 实例 A / B / C
+用户登录用户中心
+      ↓ 创建自己的 X-API-Key
+POST /v1/mailboxes
+      ↓ 积分预扣、选择域名和 CloudMail 实例
+CloudMail addUser
+      ↓ 返回邮箱地址和 mailboxToken
+普通用户：POP3 110 + 邮箱地址 + userAuthCode
+管理员：POP3 110 + 任意邮箱地址 + 管理员 POP 授权码
+      ↓
+网关调用 CloudMail emailList 并转换为 POP 邮件
 ```
 
 ## 快速部署
 
-项目默认镜像：
+默认镜像：
 
 ```text
 registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker:latest
@@ -50,82 +50,63 @@ cloudmail-token-broker/
 └── .env
 ```
 
-上传 `.env` 前必须确认：
+关键环境变量：
 
 ```dotenv
 GATEWAY_ENABLED=true
 DATABASE_URL=postgresql://数据库用户:数据库密码@host.docker.internal:5432/数据库名?connect_timeout=10
-
 DATA_ENCRYPTION_KEY=<至少32字节随机值>
 MAILBOX_SESSION_SECRET=<另一条至少32字节随机值>
 
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=<强管理密码>
+ADMIN_PASSWORD_HASH=<推荐：pbkdf2_sha256 格式的管理员密码哈希>
 ADMIN_COOKIE_SECURE=true
+USER_REGISTRATION_ENABLED=false
+
+POP3_ENABLED=true
+POP3_BIND_HOST=0.0.0.0
+POP3_PORT=8110
+POP3_MAX_CONNECTIONS=100
+POP3_MAX_AUTH_FAILURES=3
+POP3_MAX_MESSAGES=20
 ```
 
-本地 `.env` 已被 Git 忽略，不会提交。
+`POP3_PORT=8110` 是容器内监听端口；对外 `110` 由 `docker-compose.yml` 的 `110:8110` 映射提供，不配置 `POP3_PUBLIC_PORT`。首期不启用 STLS/POP3S，不能通过环境变量打开 `995`。
 
-本项目不会在 Docker Compose 中创建 PostgreSQL。`DATABASE_URL` 必须指向服务器已经安装并创建好的 PostgreSQL 数据库；容器访问宿主机数据库时优先使用 `host.docker.internal`。
-
-启动：
-
-```bash
-docker compose pull
-docker compose up -d --force-recreate
-docker compose ps
-docker compose logs --tail=100 cloudmail-token-broker
-```
-
-通过宝塔网站反向代理：
+外部服务地址：
 
 ```text
-https://cloudmail.xiaoasi.xyz  →  http://127.0.0.1:8788
+HTTPS API： https://cloudmail.xiaoasi.xyz
+管理端：   https://cloudmail.xiaoasi.xyz/admin/
+用户中心： https://cloudmail.xiaoasi.xyz/user/
+POP3：     pop.cloudmail.xiaoasi.xyz:110
 ```
 
-管理端：
+POP3 `110` 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主机应将 `110` 映射到容器内部的 `8110`，并在防火墙放行 `110/tcp`。首期普通 `USER/PASS` 不经过 TLS，必须限制访问来源；`995` 不开放。
 
-```text
-https://cloudmail.xiaoasi.xyz/admin/
-```
+管理端和用户中心都由同一个 FastAPI 容器提供静态入口：管理端为 `/admin/`，用户中心为 `/user/`，不需要单独部署第二个前端容器。
 
-详细步骤见 [docs/deployment.md](docs/deployment.md)。
+## 首次配置流程
+
+1. 使用唯一管理员账号登录 `/admin/`。
+2. 配置 CloudMail 实例和邮箱域名。
+3. 在管理端设置管理员全局 POP 授权码，完整值只展示一次。
+4. 创建普通用户并设置初始积分。
+5. 普通用户登录 `/user/`，设置自己的 `userAuthCode`。
+6. 普通用户在用户中心创建自己的 `X-API-Key`。
+7. 使用用户密钥调用 `POST /v1/mailboxes` 创建邮箱。
 
 ## 创建邮箱
-
-自动选择域名：
 
 ```bash
 curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: register-task-123' \
-  -H 'X-API-Key: <管理端创建的调用密钥>' \
+  -H 'X-API-Key: <用户自己创建的调用密钥>' \
   -d '{"purpose":"openai","addressPattern":"name_digits_4","name":"image2api"}'
 ```
 
-指定单域名：
-
-```json
-{
-  "purpose": "openai",
-  "domain": "mail-a.example.com",
-  "addressPattern": "name_digits_4",
-  "name": "kirox"
-}
-```
-
-指定域名范围：
-
-```json
-{
-  "purpose": "openai",
-  "domains": ["mail-a.example.com", "mail-b.example.com"],
-  "addressPattern": "name_random_6",
-  "name": "image2api"
-}
-```
-
-成功响应：
+成功响应会返回：
 
 ```json
 {
@@ -136,88 +117,51 @@ curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
     "domain": "mail-a.example.com",
     "mailboxToken": "短期邮箱访问凭证",
     "createdAt": "2026-08-10T08:00:00+00:00",
-    "expiresAt": "2026-08-10T08:30:00+00:00"
+    "expiresAt": "2026-08-10T08:30:00+00:00",
+    "remainingCredits": 99
   }
 }
 ```
+
+## POP3 取信
+
+普通用户邮件客户端配置：
+
+```text
+服务器：pop.cloudmail.xiaoasi.xyz
+端口：110
+安全性：普通 POP3
+用户名：创建邮箱后返回的完整 address
+密码：该邮箱所属用户的 userAuthCode
+```
+
+管理员邮件客户端配置：
+
+```text
+服务器：pop.cloudmail.xiaoasi.xyz
+端口：110
+安全性：普通 POP3
+用户名：任意未物理删除的邮箱 address
+密码：管理员全局 POP 授权码
+```
+
+只实现只读取信：`CAPA`、`USER`、`PASS`、`STAT`、`LIST`、`UIDL`、`RETR`、`TOP`、`NOOP`、`RSET`、`QUIT`。不支持 SMTP、IMAP、附件下载和 `DELE`；邮件客户端必须关闭“从服务器删除邮件”，并设置为保留服务器上的邮件。
 
 ## 查询验证码
 
 ```bash
 curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes/mbx_example/verification-code' \
-  -H 'X-API-Key: <管理端创建的调用密钥>' \
+  -H 'X-API-Key: <用户自己创建的调用密钥>' \
   -H 'Authorization: Mailbox <mailboxToken>' \
   -H 'Content-Type: application/json' \
   -d '{"purpose":"openai","waitSeconds":20}'
 ```
 
-`mailboxToken` 只允许访问创建时对应的邮箱，不是图片站或 Kirox 的长期项目密钥。
+## 数据迁移
 
-完整接口见 [调用方接入指南](docs/client-integration.md) 和 [API 接口文档](docs/api.md)。
+本次改版不兼容旧调用密钥、旧邮箱记录和旧请求日志。迁移前必须备份 PostgreSQL，并停止业务容器；迁移脚本使用 `dry-run` 预览，确认后再使用 `--apply`。
 
-## 管理端
-
-管理端提供：
-
-- 运行概览；
-- CloudMail 实例新增、编辑、启停、删除和连接测试；
-- 邮箱域名新增、编辑、权重、启停和解除冷却；
-- 邮箱记录；
-- 请求日志；
-- 安全边界和运行参数说明。
-
-CloudMail 管理员密码保存后不会返回浏览器，管理端接口使用 HttpOnly Cookie 会话。
-
-## 数据清理
-
-预览：
-
-```bash
-docker exec -w /app cloudmail-token-broker \
-  python scripts/gateway_retention_cleanup.py \
-  --request-log-retention-days 30 \
-  --mailbox-retention-days 30
-```
-
-正式执行：
-
-```bash
-docker exec -w /app cloudmail-token-broker \
-  python scripts/gateway_retention_cleanup.py \
-  --request-log-retention-days 30 \
-  --mailbox-retention-days 30 \
-  --apply
-```
-
-该脚本不会删除 CloudMail 上游邮箱账号；如果 CloudMail 支持删除用户，需要后续在 Provider 层补充上游清理。
-
-## 本地开发
-
-后端：
-
-```powershell
-uv sync --extra test
-uv run uvicorn app.main:create_app --factory --env-file .env --host 127.0.0.1 --port 8788
-```
-
-管理端：
-
-```powershell
-cd admin-web
-npm install
-npm run dev
-```
-
-生产构建和测试：
-
-```powershell
-uv run --locked --extra test pytest
-python -m compileall -q app scripts test
-uv build
-
-cd admin-web
-npm run build
-```
+旧 CloudMail 上游邮箱是否删除取决于 Provider 能力。本地删除网关记录不代表上游账号已删除。
 
 ## 文档
 

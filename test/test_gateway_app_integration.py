@@ -50,6 +50,8 @@ def test_gateway_enabled_app_boots_and_admin_can_manage_instances(tmp_path: Path
 
     assert health.status_code == 200
     assert health.json()["gatewayEnabled"] is True
+    assert health.json()["pop3Enabled"] is True
+    assert health.json()["pop3Listening"] is True
     assert login.status_code == 200
     assert created.status_code == 201
     assert domain.status_code == 201

@@ -1,5 +1,9 @@
 # Xiaoasi Mail Gateway 宝塔部署手册
 
+本文档描述 HTTPS API、管理端、用户中心和 POP3 `110` 的部署方式。`995` 不开放。
+
+> 当前仓库已接入 POP3 监听器及容器启动生命周期。生产邮件客户端接入前，仍需使用真实 CloudMail 环境完成验收，并确认宿主机防火墙放行 `110/tcp`；`995` 不开放。
+
 ## 1. 准备目录
 
 ```bash
@@ -9,16 +13,8 @@ cd /www/docker/cloudmail-token-broker
 
 上传：
 
-- `docker-compose.yml`
-- `.env`
-
-目录：
-
-```text
-/www/docker/cloudmail-token-broker/
-├── docker-compose.yml
-└── .env
-```
+- `docker-compose.yml`；
+- `.env`。
 
 镜像由 GitHub 推送触发阿里云自动构建，服务器无需上传源码。
 
@@ -29,7 +25,6 @@ IMAGE_NAME=registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker
 
 REQUEST_TIMEOUT_SECONDS=15
 LOG_LEVEL=INFO
-
 GATEWAY_ENABLED=true
 DATABASE_URL=postgresql://数据库用户:数据库密码@host.docker.internal:5432/数据库名?connect_timeout=10
 
@@ -38,55 +33,44 @@ MAILBOX_SESSION_SECRET=<另一条至少32字节随机值>
 MAILBOX_SESSION_TTL_SECONDS=1800
 
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=<强管理密码>
-ADMIN_PASSWORD_HASH=
+ADMIN_PASSWORD_HASH=<推荐：pbkdf2_sha256 格式的管理员密码哈希>
+# 旧部署兼容项：如实现保留明文引导，可与 ADMIN_PASSWORD_HASH 二选一，生产优先使用哈希
+# ADMIN_PASSWORD=<仅用于本地或一次性初始化的强密码>
 ADMIN_SESSION_TTL_SECONDS=28800
 ADMIN_COOKIE_SECURE=true
 ADMIN_LOGIN_RATE_LIMIT_PER_MINUTE=10
+USER_REGISTRATION_ENABLED=false
 
 MAILBOX_CREATE_RATE_LIMIT_PER_MINUTE=120
 MAILBOX_POLL_RATE_LIMIT_PER_MINUTE=600
+
+POP3_ENABLED=true
+POP3_BIND_HOST=0.0.0.0
+POP3_PORT=8110
+POP3_MAX_CONNECTIONS=100
+POP3_MAX_AUTH_FAILURES=3
+POP3_MAX_MESSAGES=20
 ```
 
-`DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 必须不同，且不能在部署后随意修改：
+`DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 必须不同，生产环境不能随意修改。`ADMIN_PASSWORD_HASH` 与 `ADMIN_PASSWORD` 二选一，不能同时配置，生产优先使用哈希。普通 POP3 `110` 首期不启用 TLS，`995` 不开放；如果未来启用 `STLS`，再挂载证书和私钥。
 
-- 修改数据加密密钥后，数据库内已保存的 CloudMail 管理员密码无法解密；
-- 修改邮箱会话密钥后，已签发的 `mailboxToken` 全部失效。
+`POP3_PORT=8110` 只控制容器内监听端口；对外 `110` 由 Compose 的 `110:8110` 映射提供。当前代码没有 `POP3_PUBLIC_PORT`、`POP3_STLS_ENABLED` 或证书路径环境变量，不能通过环境变量打开 `995` 或 STLS。
 
-本地项目的 `.env` 已生成随机值，但上传前仍应确认管理员密码。CloudMail 实例地址、管理员凭据、代理和 TLS 配置全部在 `/admin/` 页面维护，不写入 `.env`。
+数据库密码包含 `@`、`:`、`/`、`?`、`#` 等字符时需要 URL 编码。PostgreSQL 不由 Docker Compose 创建，必须提前创建数据库并允许 Docker 网桥访问。
 
-`DATABASE_URL` 连接服务器已经安装的 PostgreSQL。本项目不会创建 PostgreSQL 容器。数据库密码包含 `@`、`:`、`/`、`?`、`#` 等字符时，需要先进行 URL 编码。
+## 3. Docker Compose 端口
 
-服务器 PostgreSQL 需要允许 Docker 网桥访问。推荐让容器通过 `host.docker.internal` 连接宿主机，并在 PostgreSQL 中确认：
+Compose 至少需要以下端口映射：
 
-- `listen_addresses` 包含 Docker 网桥可访问的监听地址；
-- `pg_hba.conf` 允许实际 Docker 网段连接指定数据库；
-- 服务器防火墙不需要向公网开放 5432，只需允许本机 Docker 网桥。
-
-数据库尚未创建时，可由 PostgreSQL 管理员执行：
-
-```sql
-CREATE USER gateway_user WITH PASSWORD '替换为高强度数据库密码';
-CREATE DATABASE xiaoasi_mail OWNER gateway_user;
+```yaml
+ports:
+  - "127.0.0.1:8788:8080"  # HTTPS API 由宝塔反向代理
+  - "110:8110"             # 对外 POP3，客户端固定连接 110
 ```
 
-## 3. 宝塔容器编排
+容器内部使用 `8110` 是为了避免非 root 进程直接绑定特权端口；用户和外部邮件客户端仍然只配置 `110`。不要映射或开放 `995`。
 
-进入：
-
-```text
-宝塔面板 → Docker → 容器编排 → 添加编排
-```
-
-建议：
-
-- 名称：`cloudmail-token-broker`
-- 目录：`/www/docker/cloudmail-token-broker`
-- Compose：使用项目中的 `docker-compose.yml`
-
-容器启动后以非 root 用户运行应用，并通过 SQLAlchemy 连接池连接服务器 PostgreSQL。
-
-启动：
+## 4. 启动容器
 
 ```bash
 cd /www/docker/cloudmail-token-broker
@@ -96,52 +80,63 @@ docker compose ps
 docker compose logs --tail=100 cloudmail-token-broker
 ```
 
-## 4. 配置 HTTPS 网站
+容器应继续以非 root 用户运行。POP3 服务和 FastAPI 必须是独立的 TCP/HTTP 生命周期，不能使用 HTTP 路由模拟 POP3。
 
-宝塔新建网站，例如：
+FastAPI 同时挂载 `/admin/` 和 `/user/` 静态入口；宝塔只需将 HTTPS API 域名反向代理到 `127.0.0.1:8788`，不需要为用户中心单独配置站点或容器。
 
-```text
-cloudmail.xiaoasi.xyz
-```
+## 5. HTTPS 和 POP3 DNS
 
-反向代理：
+宝塔 HTTPS 网站：
 
 ```text
-http://127.0.0.1:8788
+cloudmail.xiaoasi.xyz  →  http://127.0.0.1:8788
 ```
 
-启用 SSL 并强制 HTTPS。不要直接把 8788 开放到公网。
-
-管理端：
+POP3 建议使用独立域名：
 
 ```text
-https://cloudmail.xiaoasi.xyz/admin/
+pop.cloudmail.xiaoasi.xyz  →  服务器公网 IP
 ```
 
-建议给 `/admin/` 和 `/admin-api/` 再增加宝塔访问限制、Cloudflare Access 或固定来源 IP。
+POP3 是原始 TCP 协议，不能通过普通 HTTP 反向代理转发。若使用 Cloudflare，POP3 域名必须使用 DNS only，除非另行购买并配置 TCP 代理能力。
 
-## 5. 首次配置
+服务器防火墙必须允许业务来源访问 `110/tcp`，并且必须只允许已知业务服务器或办公网段访问；禁止将普通明文 POP3 对全公网开放。管理端、API 和数据库仍按最小来源范围限制。
 
-1. 使用 `.env` 中的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 登录管理端。
-2. 进入“CloudMail 实例”，新增第一个实例。
-3. 填写 API 地址、管理员邮箱、管理员密码、代理和 TLS 设置。
-4. 创建成功后不要关闭抽屉，在“当前实例的邮箱域名”区域添加一个或多个域名；这里新增的域名会自动绑定当前实例。
-5. 设置域名启用状态和调度权重。也可以进入独立“邮箱域名”页面进行跨实例集中维护。
-6. 点击实例列表中的“测试”，确认 `genToken` 成功。
-7. 进入“调用密钥”，为测试项目创建一条密钥并复制完整 `X-API-Key`。
-8. 使用 `/v1/mailboxes` 测试创建邮箱。
-9. 触发测试邮件后验证验证码查询。
+## 6. 首次配置
 
-不同 CloudMail 实例分别新增，每个实例可以维护多个域名。
+1. 使用 `.env` 中的管理员账号登录 `/admin/`。
+2. 新增 CloudMail 实例并填写管理员邮箱、密码、API 地址和 TLS 设置。
+3. 为实例添加邮箱域名并测试连接。
+4. 设置管理员全局 POP 授权码，完整值只展示一次。
+5. 创建普通用户并配置初始积分。
+6. 普通用户登录 `/user/`，设置自己的 `userAuthCode` 并创建 `X-API-Key`。
+7. 使用用户密钥调用 `/v1/mailboxes` 验证邮箱创建和积分扣费。
+8. 使用普通用户授权码和管理员全局授权码分别验证 POP3 110 的访问范围。
 
-服务首次连接空 PostgreSQL 数据库时会自动创建数据表、索引和结构版本记录。当前不迁移旧 SQLite 数据，CloudMail 实例和邮箱域名需要在管理端重新配置。
-
-## 6. 验证命令
+## 7. 验证命令
 
 健康检查：
 
 ```bash
 curl -fsS http://127.0.0.1:8788/healthz
+```
+
+检查用户中心静态入口：
+
+```bash
+curl -fsSI https://cloudmail.xiaoasi.xyz/user/
+```
+
+检查端口：
+
+```bash
+nc -vz 127.0.0.1 110
+```
+
+检查 POP3 欢迎语：
+
+```bash
+printf 'QUIT\r\n' | nc -v pop.cloudmail.xiaoasi.xyz 110
 ```
 
 创建邮箱：
@@ -150,29 +145,26 @@ curl -fsS http://127.0.0.1:8788/healthz
 curl -sS -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: deploy-test-001' \
-  -H 'X-API-Key: 替换为管理端创建的调用密钥' \
+  -H 'X-API-Key: 用户自己创建的调用密钥' \
   -d '{"purpose":"openai","addressPattern":"name_digits_4","name":"deploytest"}'
 ```
 
-保存返回的 `mailboxId` 和 `mailboxToken`，再查询状态或验证码。
+## 8. 一次性数据迁移
 
-## 7. 更新镜像
+本次改版不兼容旧调用密钥、邮箱记录、幂等记录和请求日志。迁移前：
 
-阿里云自动构建完成后：
+1. 停止业务容器；
+2. 备份 `.env` 和 PostgreSQL；
+3. 运行迁移脚本 dry-run；
+4. 确认删除范围后使用 `--apply`；
+5. 重建新用户、唯一管理员、用户密钥、用户会话、积分规则、积分流水和审计表；
+6. 设置管理员全局 POP 授权码；
+7. 重新创建普通用户调用密钥和用户授权码；
+8. 分别验收普通用户和管理员 POP3 访问。
 
-```bash
-cd /www/docker/cloudmail-token-broker
-docker compose pull
-docker compose up -d --force-recreate
-docker compose ps
-docker compose logs --tail=100 cloudmail-token-broker
-```
+迁移必须删除或重建旧业务表，不能只清空数据行。旧 CloudMail 上游邮箱不会因为本地记录删除而自动消失，是否删除取决于 Provider 能力。
 
-业务数据存放在服务器 PostgreSQL。重建网关容器不会删除数据库数据。
-
-## 8. 备份
-
-升级前备份 `.env`，并使用 PostgreSQL 自带工具备份数据库：
+## 9. 备份
 
 ```bash
 cd /www/docker/cloudmail-token-broker
@@ -181,50 +173,21 @@ PGPASSWORD='数据库密码' pg_dump -h 127.0.0.1 -U 数据库用户 -d 数据�
   -Fc -f "xiaoasi-mail-$(date +%Y%m%d-%H%M%S).dump"
 ```
 
-`.env` 中的数据加密密钥必须与 PostgreSQL 备份一起保留，否则恢复数据库后无法解密实例密码。
-
-## 9. 数据清理定时任务
-
-先执行 dry-run：
-
-```bash
-docker exec -w /app cloudmail-token-broker \
-  python scripts/gateway_retention_cleanup.py \
-  --request-log-retention-days 30 \
-  --mailbox-retention-days 30
-```
-
-确认数量后正式执行：
-
-```bash
-docker exec -w /app cloudmail-token-broker \
-  python scripts/gateway_retention_cleanup.py \
-  --request-log-retention-days 30 \
-  --mailbox-retention-days 30 \
-  --apply
-```
-
-宝塔计划任务建议每天凌晨执行一次正式命令。脚本会输出中文摘要。
-
-清理范围：
-
-- 过期幂等记录；
-- 过期管理会话；
-- 将过期 active 邮箱标记为 expired；
-- 超过保留期的请求日志；
-- 超过保留期且已 released、expired 或 failed 的邮箱记录。
-
-不会删除：
-
-- 未过期 active 邮箱；
-- CloudMail 上游邮箱账号；
-- CloudMail 实例和域名配置。
+`.env` 中的数据加密密钥必须与 PostgreSQL 备份一起保留，否则恢复数据库后无法解密 CloudMail 实例密码。
 
 ## 10. 常见问题
 
-### 容器提示网关密钥配置错误
+### POP3 110 无法连接
 
-确认 `DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 已替换占位符且至少 32 字节。
+检查容器端口映射是否为 `110:8110`、主机防火墙、云安全组、DNS 是否指向正确服务器，以及 POP3 进程是否监听容器内 `8110`。同时检查应用启动日志中 POP3 监听器已启动、停止时已释放端口；不要检查 `995`，本项目不开放该端口。
+
+### 普通用户能访问其他用户邮箱
+
+检查 POP 登录是否按 `owner_user_id` 校验，以及管理员全局授权码是否被错误地配置到了普通用户字段。普通用户只能使用自己的 `userAuthCode`。
+
+### 管理员无法读取全部邮箱
+
+确认管理员已设置全局 POP 授权码，并使用任意未物理删除且上游仍存在的邮箱地址作为用户名。管理员 POP 授权码不等于管理员登录密码。
 
 ### 管理端登录后立即返回登录页
 
@@ -234,30 +197,6 @@ docker exec -w /app cloudmail-token-broker \
 ADMIN_COOKIE_SECURE=true
 ```
 
-如果只在本机 HTTP 测试，可临时设置为 `false`。
-
 ### PostgreSQL 无法连接
 
-检查 `DATABASE_URL`、数据库用户名和密码、PostgreSQL 监听地址、`pg_hba.conf`、Docker 网段及容器日志。容器内的 `127.0.0.1` 指向容器自身，连接宿主机数据库应使用 `host.docker.internal` 或服务器可达 IP。
-
-### 实例测试失败
-
-检查：
-
-- CloudMail API 地址；
-- 管理员邮箱和密码；
-- 容器到 CloudMail 的网络；
-- `proxy_url`；
-- TLS 证书设置。
-
-### 自动模式提示没有可用域名
-
-确认至少存在一个：
-
-- 已启用的 CloudMail 实例；
-- 已启用的邮箱域名；
-- 不处于异常或冷却状态的域名。
-
-### 能否运行多个网关副本
-
-PostgreSQL 已支持并发数据库访问，但 CloudMail Token 缓存和刷新锁仍在进程内。当前仍建议保持一个网关容器、一个 Uvicorn worker；后续如需多副本，需要再增加跨进程 Token 协调。
+检查 `DATABASE_URL`、数据库用户名和密码、PostgreSQL 监听地址、`pg_hba.conf`、Docker 网段和容器日志。容器内的 `127.0.0.1` 指向容器自身，宿主机数据库应使用 `host.docker.internal` 或服务器可达 IP。

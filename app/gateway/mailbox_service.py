@@ -21,6 +21,7 @@ from app.gateway.gateway_schemas import (
     VerificationCodeRequest,
 )
 from app.gateway.mailbox_token import MailboxTokenSigner
+from app.gateway.user_repository import get_authenticated_user_id
 from app.gateway.verification import extract_verification_code
 
 
@@ -45,10 +46,22 @@ class MailboxGatewayService:
         self._idempotency_locks: dict[str, tuple[asyncio.Lock, int]] = {}
         self._idempotency_locks_guard = asyncio.Lock()
 
-    async def create_mailbox(self, request: CreateMailboxRequest, idempotency_key: str | None, client_name: str = "") -> MailboxData:
-        internal_key = f"{client_name}:{idempotency_key}" if client_name and idempotency_key else idempotency_key
+    async def create_mailbox(
+        self,
+        request: CreateMailboxRequest,
+        idempotency_key: str | None,
+        client_name: str = "",
+        user_id: int | None = None,
+    ) -> MailboxData:
+        owner_user_id = user_id if user_id is not None else get_authenticated_user_id()
+        if owner_user_id is not None:
+            owner_user_id = int(owner_user_id)
+        if owner_user_id is not None and idempotency_key:
+            internal_key = f"user:{owner_user_id}:{idempotency_key}"
+        else:
+            internal_key = f"{client_name}:{idempotency_key}" if client_name and idempotency_key else idempotency_key
         if not internal_key:
-            return await self._create_mailbox(request, None, client_name)
+            return await self._create_mailbox(request, None, client_name, owner_user_id)
         async with self._idempotency_locks_guard:
             lock, users = self._idempotency_locks.get(
                 internal_key,
@@ -57,7 +70,7 @@ class MailboxGatewayService:
             self._idempotency_locks[internal_key] = (lock, users + 1)
         try:
             async with lock:
-                return await self._create_mailbox(request, internal_key, client_name)
+                return await self._create_mailbox(request, internal_key, client_name, owner_user_id)
         finally:
             async with self._idempotency_locks_guard:
                 current = self._idempotency_locks.get(internal_key)
@@ -67,7 +80,13 @@ class MailboxGatewayService:
                     else:
                         self._idempotency_locks[internal_key] = (lock, current[1] - 1)
 
-    async def _create_mailbox(self, request: CreateMailboxRequest, idempotency_key: str | None, client_name: str = "") -> MailboxData:
+    async def _create_mailbox(
+        self,
+        request: CreateMailboxRequest,
+        idempotency_key: str | None,
+        client_name: str = "",
+        owner_user_id: int | None = None,
+    ) -> MailboxData:
         request_hash = _request_hash(request)
         if idempotency_key:
             existing = self.store.get_idempotency(idempotency_key)
@@ -79,69 +98,98 @@ class MailboxGatewayService:
                     return self._mailbox_data(mailbox)
 
         candidates = self.router.candidates(request.domain, request.domains)
+        mailbox_id = f"mbx_{uuid.uuid4().hex}"
+        credit_pending = False
+        credit_reference = idempotency_key or mailbox_id
+        if owner_user_id is not None:
+            reserve_credit = getattr(self.store, "reserve_mailbox_credit", None)
+            if reserve_credit is None:
+                raise GatewayBusinessError("CREDIT_UNAVAILABLE", "积分服务当前不可用", 503)
+            try:
+                reserve_credit(owner_user_id, credit_reference)
+            except ValueError as exc:
+                if str(exc) == "INSUFFICIENT_CREDITS":
+                    raise GatewayBusinessError("INSUFFICIENT_CREDITS", "积分余额不足", 402) from exc
+                raise GatewayBusinessError("CREDIT_UNAVAILABLE", "积分服务当前不可用", 503) from exc
+            credit_pending = True
+
         last_error: ProviderRequestError | None = None
-        for domain, instance in candidates[: self.max_create_attempts]:
-            address = ""
-            candidate_error: ProviderRequestError | None = None
-            client = await self.providers.client_for(instance)
-            for _address_attempt in range(self.max_address_attempts):
-                address = generate_mailbox_address(
-                    domain.domain,
-                    pattern=request.address_pattern,
-                    name=request.name,
-                    prefix=request.prefix,
+        try:
+            for domain, instance in candidates[: self.max_create_attempts]:
+                address = ""
+                candidate_error: ProviderRequestError | None = None
+                client = await self.providers.client_for(instance)
+                for _address_attempt in range(self.max_address_attempts):
+                    address = generate_mailbox_address(
+                        domain.domain,
+                        pattern=request.address_pattern,
+                        name=request.name,
+                        prefix=request.prefix,
+                    )
+                    password = generate_mailbox_password()
+                    try:
+                        created = await client.create_mailbox(address, password)
+                    except ProviderRequestError as exc:
+                        self.store.mark_domain_failure(domain.id, "MAILBOX_CREATE_FAILED")
+                        candidate_error = exc
+                        last_error = exc
+                        break
+                    if created is not False:
+                        break
+                else:
+                    # 用户名碰撞不代表域名异常，尝试下一个候选域名。
+                    last_error = ProviderRequestError("创建邮箱", retryable=True)
+                    if request.domain:
+                        break
+                    continue
+
+                if candidate_error is not None:
+                    if request.domain or not candidate_error.retryable:
+                        break
+                    continue
+
+                now = datetime.now(UTC)
+                mailbox = MailboxRecord(
+                    id=mailbox_id,
+                    address=address,
+                    domain_id=domain.id,
+                    instance_id=instance.id,
+                    purpose=request.purpose.strip().lower(),
+                    source=client_name,
+                    provider_reference=address,
+                    created_at=now,
+                    expires_at=now + timedelta(seconds=self.mailbox_ttl_seconds),
+                    owner_user_id=owner_user_id,
                 )
-                password = generate_mailbox_password()
-                try:
-                    created = await client.create_mailbox(address, password)
-                except ProviderRequestError as exc:
-                    self.store.mark_domain_failure(domain.id, "MAILBOX_CREATE_FAILED")
-                    candidate_error = exc
-                    last_error = exc
-                    break
-                if created is not False:
-                    break
-            else:
-                # 用户名碰撞不代表域名异常，尝试下一个候选域名。
-                last_error = ProviderRequestError("创建邮箱", retryable=True)
-                if request.domain:
-                    break
-                continue
+                idempotency = None
+                if idempotency_key:
+                    idempotency = IdempotencyRecord(
+                        key=idempotency_key,
+                        request_hash=request_hash,
+                        mailbox_id=mailbox.id,
+                        expires_at=mailbox.expires_at,
+                        user_id=owner_user_id,
+                    )
+                self.store.save_mailbox(mailbox, idempotency)
+                if owner_user_id is not None:
+                    self.store.confirm_mailbox_credit(owner_user_id, credit_reference)
+                    credit_pending = False
+                self.store.mark_domain_success(domain.id)
+                return self._mailbox_data(mailbox)
 
-            if candidate_error is not None:
-                if request.domain or not candidate_error.retryable:
-                    break
-                continue
-
-            now = datetime.now(UTC)
-            mailbox = MailboxRecord(
-                id=f"mbx_{uuid.uuid4().hex}",
-                address=address,
-                domain_id=domain.id,
-                instance_id=instance.id,
-                purpose=request.purpose.strip().lower(),
-                source=client_name,
-                provider_reference=address,
-                created_at=now,
-                expires_at=now + timedelta(seconds=self.mailbox_ttl_seconds),
+            raise GatewayBusinessError(
+                "MAILBOX_CREATE_FAILED",
+                "邮箱创建失败，请稍后重试",
+                502 if last_error is not None else 503,
             )
-            idempotency = None
-            if idempotency_key:
-                idempotency = IdempotencyRecord(
-                    key=idempotency_key,
-                    request_hash=request_hash,
-                    mailbox_id=mailbox.id,
-                    expires_at=mailbox.expires_at,
-                )
-            self.store.save_mailbox(mailbox, idempotency)
-            self.store.mark_domain_success(domain.id)
-            return self._mailbox_data(mailbox)
-
-        raise GatewayBusinessError(
-            "MAILBOX_CREATE_FAILED",
-            "邮箱创建失败，请稍后重试",
-            502 if last_error is not None else 503,
-        )
+        except GatewayBusinessError:
+            if credit_pending and owner_user_id is not None:
+                self.store.refund_mailbox_credit(owner_user_id, credit_reference)
+            raise
+        except Exception as exc:
+            if credit_pending and owner_user_id is not None:
+                self.store.refund_mailbox_credit(owner_user_id, credit_reference)
+            raise GatewayBusinessError("MAILBOX_CREATE_FAILED", "邮箱创建失败，请稍后重试", 502) from exc
 
     async def get_verification_code(
         self,
@@ -236,6 +284,13 @@ class MailboxGatewayService:
     def _verify_client(mailbox: MailboxRecord, client_name: str) -> None:
         if client_name and mailbox.source != client_name:
             raise GatewayBusinessError("MAILBOX_ACCESS_DENIED", "当前调用密钥无权访问该邮箱", 403)
+        authenticated_user_id = get_authenticated_user_id()
+        if (
+            mailbox.owner_user_id is not None
+            and authenticated_user_id is not None
+            and mailbox.owner_user_id != authenticated_user_id
+        ):
+            raise GatewayBusinessError("MAILBOX_ACCESS_DENIED", "当前用户无权访问该邮箱", 403)
 
 
 def _request_hash(request: CreateMailboxRequest) -> str:

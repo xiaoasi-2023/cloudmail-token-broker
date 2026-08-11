@@ -35,7 +35,7 @@ RUN apt-get update \
     && addgroup --system --gid 10001 broker \
     && adduser --system --uid 10001 --ingroup broker --no-create-home broker
 
-EXPOSE 8080
+EXPOSE 8080 8110
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--no-access-log"]

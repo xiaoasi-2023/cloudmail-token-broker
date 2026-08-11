@@ -1,0 +1,121 @@
+import type { CreditSummary, UserApiKey, UserMailbox, UserProfile } from "./userTypes";
+
+type ApiEnvelope<T> = {
+  ok?: boolean;
+  code?: number | string;
+  data?: T;
+  detail?: { code?: string; message?: string };
+  message?: string;
+};
+
+export class UserApiError extends Error {
+  status: number;
+  code: string;
+
+  constructor(message: string, status: number, code = "REQUEST_FAILED") {
+    super(message);
+    this.name = "UserApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`/user-api${path}`, {
+    credentials: "include",
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
+  });
+
+  let payload: ApiEnvelope<T> | T | null = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // 非 JSON 响应统一转为可读错误。
+  }
+
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" && "detail" in payload
+      ? (payload as ApiEnvelope<T>).detail
+      : undefined;
+    if (response.status === 401) {
+      window.dispatchEvent(new Event("user-unauthorized"));
+    }
+    throw new UserApiError(
+      detail?.message || (payload && typeof payload === "object" && "message" in payload ? String((payload as ApiEnvelope<T>).message) : "请求失败，请稍后重试") || `请求失败（HTTP ${response.status}）`,
+      response.status,
+      detail?.code || String(payload && typeof payload === "object" && "code" in payload ? (payload as ApiEnvelope<T>).code : "REQUEST_FAILED"),
+    );
+  }
+
+  return payload as T;
+}
+
+function unwrap<T>(payload: ApiEnvelope<T> | T): T {
+  if (payload && typeof payload === "object" && "data" in payload && payload.data !== undefined) {
+    return payload.data as T;
+  }
+  return payload as T;
+}
+
+function asList<T>(payload: unknown): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+  if (payload && typeof payload === "object") {
+    const value = payload as { items?: unknown; records?: unknown; list?: unknown; data?: unknown };
+    if (Array.isArray(value.items)) return value.items as T[];
+    if (Array.isArray(value.records)) return value.records as T[];
+    if (Array.isArray(value.list)) return value.list as T[];
+    if (Array.isArray(value.data)) return value.data as T[];
+  }
+  return [];
+}
+
+export const userApi = {
+  me: async () => unwrap(await request<ApiEnvelope<UserProfile> | UserProfile>("/me")),
+  login: (username: string, password: string) =>
+    request<ApiEnvelope<{ username?: string }> | { username?: string }>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  logout: () => request<ApiEnvelope<{ ok: boolean }> | { ok: boolean }>("/auth/logout", { method: "POST" }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<ApiEnvelope<unknown> | unknown>("/auth/password", {
+      method: "PUT",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+  revokeAllSessions: () =>
+    request<ApiEnvelope<unknown> | unknown>("/auth/sessions/revoke-all", { method: "POST" }),
+  apiKeys: async () => asList<UserApiKey>(unwrap(await request<ApiEnvelope<unknown> | unknown>("/api-keys"))),
+  createApiKey: async (name: string) =>
+    unwrap(await request<ApiEnvelope<UserApiKey> | UserApiKey>("/api-keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    })),
+  revokeApiKey: (id: string | number) =>
+    request<ApiEnvelope<unknown> | unknown>(`/api-keys/${encodeURIComponent(String(id))}`, { method: "DELETE" }),
+  setAuthCode: async (userAuthCode: string) =>
+    unwrap(await request<ApiEnvelope<{ userAuthCode?: string; user_auth_code?: string; authCode?: string; configured?: boolean }> | { userAuthCode?: string; user_auth_code?: string; authCode?: string; configured?: boolean }>("/auth-code", {
+      method: "PUT",
+      body: JSON.stringify({ userAuthCode }),
+    })),
+  credits: async () => {
+    const data = unwrap(await request<ApiEnvelope<unknown> | unknown>("/credits"));
+    const record = (data && typeof data === "object" ? data : {}) as {
+      balance?: number;
+      credits?: number;
+      credit_balance?: number;
+      creditBalance?: number;
+      transactions?: CreditSummary["transactions"];
+      items?: CreditSummary["transactions"];
+      records?: CreditSummary["transactions"];
+    };
+    return {
+      balance: Number(record.balance ?? record.credits ?? record.credit_balance ?? record.creditBalance ?? 0),
+      transactions: record.transactions || record.items || record.records || [],
+    } satisfies CreditSummary;
+  },
+  mailboxes: async () => asList<UserMailbox>(unwrap(await request<ApiEnvelope<unknown> | unknown>("/mailboxes?limit=100&offset=0"))),
+};

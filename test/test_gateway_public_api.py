@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from app.gateway.business_models import CloudMailInstanceConfig, MailDomainConfig, MailMessage
 from app.gateway.database import GatewayDatabase
@@ -13,6 +15,7 @@ from app.gateway.mailbox_service import MailboxGatewayService
 from app.gateway.mailbox_token import MailboxTokenSigner
 from app.gateway.public_api import create_gateway_router
 from app.gateway.database_business_store import DatabaseGatewayBusinessStore
+from app.gateway.user_repository import UserRepository
 
 
 class PlainCipher:
@@ -24,12 +27,13 @@ class PlainCipher:
 
 
 class FakeProvider:
-    def __init__(self) -> None:
+    def __init__(self, *, succeed: bool = True) -> None:
         self.created: list[str] = []
+        self.succeed = succeed
 
     async def create_mailbox(self, address: str, password: str) -> bool:
         self.created.append(address)
-        return True
+        return self.succeed
 
     async def list_messages(self, address: str) -> list[MailMessage]:
         return [MailMessage(subject="Your temporary ChatGPT verification code", text="Enter this temporary verification code to continue: 836215", received_at=datetime.now(UTC))]
@@ -91,7 +95,9 @@ def test_database_store_maps_instance_domain_mailbox_and_health(tmp_path: Path) 
 
 
 def test_public_router_create_and_verification_flow(tmp_path: Path) -> None:
-    _, store = seed_database(tmp_path / "gateway-api.db")
+    database, store = seed_database(tmp_path / "gateway-api.db")
+    users = UserRepository(database)
+    user = users.create_user(username="api-user", password="api-user-password", initial_points=5)
     provider = FakeProvider()
     service = MailboxGatewayService(
         store,
@@ -99,7 +105,17 @@ def test_public_router_create_and_verification_flow(tmp_path: Path) -> None:
         MailboxTokenSigner("s" * 32),
     )
     app = FastAPI()
-    app.include_router(create_gateway_router(service, lambda value: {"name": "test-client" if value == "test-key" else "other-client"} if value in {"test-key", "other-key"} else None))
+    app.include_router(
+        create_gateway_router(
+            service,
+            lambda value: {
+                "name": "test-client" if value == "test-key" else "other-client",
+                "user_id": user["id"],
+            }
+            if value in {"test-key", "other-key"}
+            else None,
+        )
+    )
 
     with TestClient(app) as client:
         created = client.post(
@@ -168,4 +184,142 @@ def test_public_router_create_and_verification_flow(tmp_path: Path) -> None:
             json={"purpose": "openai"},
         )
         assert invalid_key.status_code == 401
-        assert invalid_key.json()["code"] == "CLIENT_KEY_INVALID"
+        assert invalid_key.json()["code"] == "API_KEY_INVALID"
+
+
+def test_user_mailbox_creation_binds_owner_and_charges_once(tmp_path: Path) -> None:
+    database, store = seed_database(tmp_path / "user-mailbox.db")
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE credit_rules SET cost_points=2 WHERE operation='create_mailbox'"
+        )
+    users = UserRepository(database)
+    user = users.create_user(username="alice", password="alice-password-123", initial_points=3)
+    api_key = users.create_api_key(user["id"], "shared-client")["api_key"]
+    provider = FakeProvider()
+    service = MailboxGatewayService(
+        store,
+        FakeRegistry(provider),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+    )
+    app = FastAPI()
+    app.include_router(create_gateway_router(service, users.authenticate_api_key))
+
+    with TestClient(app) as client:
+        headers = {"X-API-Key": api_key, "Idempotency-Key": "user-create-1"}
+        first = client.post("/v1/mailboxes", headers=headers, json={"domain": "one.test"})
+        second = client.post("/v1/mailboxes", headers=headers, json={"domain": "one.test"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["data"]["mailboxId"] == second.json()["data"]["mailboxId"]
+    assert len(provider.created) == 1
+    mailbox_id = first.json()["data"]["mailboxId"]
+    mailbox = store.get_mailbox(mailbox_id)
+    assert mailbox is not None
+    assert mailbox.owner_user_id == user["id"]
+    credits = users.get_credits(user["id"])
+    assert credits is not None
+    assert credits["balance"] == 1
+    assert credits["transactions"][0]["type"] == "consume"
+    assert credits["transactions"][0]["status"] == "completed"
+
+
+def test_user_mailbox_creation_rejects_insufficient_credits(tmp_path: Path) -> None:
+    database, store = seed_database(tmp_path / "user-mailbox-insufficient.db")
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE credit_rules SET cost_points=2 WHERE operation='create_mailbox'"
+        )
+    users = UserRepository(database)
+    user = users.create_user(username="poor-user", password="poor-user-password", initial_points=1)
+    provider = FakeProvider()
+    service = MailboxGatewayService(
+        store,
+        FakeRegistry(provider),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+    )
+
+    with pytest.raises(Exception) as error:
+        asyncio.run(
+            service.create_mailbox(
+                CreateMailboxRequest(domain="one.test"),
+                "insufficient-create-1",
+                user_id=user["id"],
+            )
+        )
+
+    assert getattr(error.value, "code", None) == "INSUFFICIENT_CREDITS"
+    assert provider.created == []
+    credits = users.get_credits(user["id"])
+    assert credits is not None
+    assert credits["balance"] == 1
+
+
+def test_user_mailbox_provider_failure_refunds_precharged_points(tmp_path: Path) -> None:
+    database, store = seed_database(tmp_path / "user-mailbox-refund.db")
+    users = UserRepository(database)
+    user = users.create_user(username="refund-user", password="refund-password-123", initial_points=3)
+    service = MailboxGatewayService(
+        store,
+        FakeRegistry(FakeProvider(succeed=False)),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+    )
+
+    with pytest.raises(Exception) as error:
+        asyncio.run(
+            service.create_mailbox(
+                CreateMailboxRequest(domain="one.test"),
+                "refund-create-1",
+                user_id=user["id"],
+            )
+        )
+
+    assert getattr(error.value, "code", None) == "MAILBOX_CREATE_FAILED"
+    credits = users.get_credits(user["id"])
+    assert credits is not None
+    assert credits["balance"] == 3
+    assert [item["type"] for item in credits["transactions"][:2]] == ["refund", "consume"]
+    assert credits["transactions"][0]["status"] == "completed"
+    assert credits["transactions"][1]["status"] == "reversed"
+
+
+def test_user_mailbox_queries_are_owner_isolated(tmp_path: Path) -> None:
+    database, store = seed_database(tmp_path / "user-mailbox-isolation.db")
+    users = UserRepository(database)
+    user_a = users.create_user(username="owner-a", password="owner-a-password", initial_points=2)
+    user_b = users.create_user(username="owner-b", password="owner-b-password", initial_points=2)
+    key_a = users.create_api_key(user_a["id"], "shared-client")["api_key"]
+    key_b = users.create_api_key(user_b["id"], "shared-client")["api_key"]
+    provider = FakeProvider()
+    service = MailboxGatewayService(
+        store,
+        FakeRegistry(provider),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+    )
+    created = asyncio.run(
+        service.create_mailbox(
+            CreateMailboxRequest(domain="one.test"),
+            "owner-a-create-1",
+            client_name="shared-client",
+            user_id=user_a["id"],
+        )
+    )
+    assert len(users.list_user_mailboxes(user_a["id"])) == 1
+    assert users.list_user_mailboxes(user_b["id"]) == []
+
+    app = FastAPI()
+    app.include_router(create_gateway_router(service, users.authenticate_api_key))
+    with TestClient(app) as client:
+        own = client.get(
+            f"/v1/mailboxes/{created.mailbox_id}",
+            headers={"X-API-Key": key_a, "Authorization": f"Mailbox {created.mailbox_token}"},
+        )
+        other = client.get(
+            f"/v1/mailboxes/{created.mailbox_id}",
+            headers={"X-API-Key": key_b, "Authorization": f"Mailbox {created.mailbox_token}"},
+        )
+
+    assert own.status_code == 200
+    assert other.status_code == 403
+    assert other.json()["code"] == "MAILBOX_ACCESS_DENIED"

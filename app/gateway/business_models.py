@@ -39,6 +39,7 @@ class MailboxRecord:
     provider_reference: str
     created_at: datetime
     expires_at: datetime
+    owner_user_id: int | None = None
     status: str = "active"
     verification_status: str = "pending"
     verification_code: str = ""
@@ -50,6 +51,7 @@ class IdempotencyRecord:
     request_hash: str
     mailbox_id: str
     expires_at: datetime
+    user_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

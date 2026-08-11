@@ -17,19 +17,25 @@ from app.gateway.mailbox_service import MailboxGatewayService
 from app.gateway.mailbox_token import parse_mailbox_authorization
 
 
-ClientKeyAuthenticator = Callable[[str], dict[str, Any] | None]
+UserApiKeyAuthenticator = Callable[[str], dict[str, Any] | None]
 
 
-def create_gateway_router(service: MailboxGatewayService, authenticate_client_key: ClientKeyAuthenticator) -> APIRouter:
+def create_gateway_router(
+    service: MailboxGatewayService,
+    authenticate_user_api_key: UserApiKeyAuthenticator,
+) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["mail-gateway"])
 
-    def client_name(request: Request, api_key: str | None) -> str:
-        client = authenticate_client_key(api_key or "")
+    def authenticated_client(request: Request, api_key: str | None) -> dict[str, Any]:
+        client = authenticate_user_api_key(api_key or "")
         if client is None:
-            raise GatewayBusinessError("CLIENT_KEY_INVALID", "调用密钥无效或已停用", 401)
-        name = str(client["name"])
-        request.state.client_name = name
-        return name
+            raise GatewayBusinessError("API_KEY_INVALID", "用户调用密钥无效或已停用", 401)
+        request.state.client_name = str(client["name"])
+        request.state.user_id = int(client["user_id"])
+        return client
+
+    def client_name(request: Request, api_key: str | None) -> str:
+        return str(authenticated_client(request, api_key)["name"])
 
     @router.post("/mailboxes", response_model=CreateMailboxResponse)
     async def create_mailbox(
@@ -43,7 +49,13 @@ def create_gateway_router(service: MailboxGatewayService, authenticate_client_ke
         ),
     ) -> CreateMailboxResponse:
         try:
-            data = await service.create_mailbox(request, idempotency_key, client_name(http_request, x_api_key))
+            client = authenticated_client(http_request, x_api_key)
+            data = await service.create_mailbox(
+                request,
+                idempotency_key,
+                str(client["name"]),
+                user_id=int(client["user_id"]),
+            )
             return CreateMailboxResponse(data=data)
         except GatewayBusinessError as exc:
             return _error_response(exc)

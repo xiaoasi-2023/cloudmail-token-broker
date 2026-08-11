@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from app.gateway.admin_auth import AdminSessionService
 from app.gateway.database import DatabaseIntegrityError
 from app.gateway.repository import GatewayRepository
+from app.gateway.user_repository import UserRepository
 
 
 InstanceTestHook = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -18,6 +19,7 @@ InstanceTestHook = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 class AdminApiContext:
     repository: GatewayRepository
     sessions: AdminSessionService
+    users: UserRepository | None = None
     instance_test_hook: InstanceTestHook | None = None
     cookie_secure: bool = True
 
@@ -63,17 +65,37 @@ class DomainUpdateRequest(BaseModel):
     remark: str | None = Field(default=None, max_length=500)
 
 
-class ClientKeyCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
+class UserCreateRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=10, max_length=1000)
+    email: str | None = Field(default=None, max_length=320)
+    initial_points: int | None = Field(default=None, ge=0)
 
 
-class ClientKeyUpdateRequest(BaseModel):
+class UserUpdateRequest(BaseModel):
     enabled: bool
+
+
+class CreditAdjustRequest(BaseModel):
+    amount: int
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class CreditRuleUpdateRequest(BaseModel):
+    cost_points: int = Field(ge=0)
+    initial_user_points: int = Field(ge=0)
+
+
+class PopAuthCodeRequest(BaseModel):
+    auth_code: str = Field(min_length=10, max_length=1000)
 
 
 def create_admin_router(context: AdminApiContext) -> APIRouter:
     router = APIRouter(prefix="/admin-api", tags=["gateway-admin"])
     cookie_name = "xiaoasi_admin_session"
+    users = context.users or UserRepository(context.repository.database)
+    if context.users is None:
+        users.ensure_admin(context.sessions.username, context.sessions.password_hash)
 
     def current_admin(session_token: str | None = Cookie(default=None, alias=cookie_name)) -> str:
         username = context.sessions.authenticate(session_token)
@@ -83,6 +105,31 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
 
     def not_found(resource: str) -> HTTPException:
         return HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": f"{resource}不存在"})
+
+    def current_admin_user(username: str) -> dict[str, Any]:
+        user = users.get_user_by_username(username)
+        if user is None or user["role"] != "admin" or user["status"] != "active":
+            raise HTTPException(status_code=401, detail={"code": "ADMIN_UNAUTHORIZED", "message": "管理员账号无效"})
+        return user
+
+    def audit_admin(
+        username: str,
+        action: str,
+        target_type: str = "",
+        target_id: str = "",
+        detail: str = "",
+        request: Request | None = None,
+    ) -> None:
+        admin = current_admin_user(username)
+        users.audit_admin(
+            admin_user_id=admin["id"],
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            detail=detail,
+            request_id=request.headers.get("X-Request-ID", "") if request else "",
+            source_ip=request.client.host if request and request.client else "",
+        )
 
     @router.post("/auth/login")
     async def login(body: LoginRequest, response: Response):
@@ -117,6 +164,127 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
         response.delete_cookie(cookie_name, path="/")
         context.repository.audit(username, "admin.logout")
         return {"ok": True}
+
+    @router.get("/users")
+    async def list_users(_username: str = Depends(current_admin)):
+        return {"ok": True, "data": users.list_users()}
+
+    @router.post("/users", status_code=201)
+    async def create_user(
+        body: UserCreateRequest,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        try:
+            item = users.create_user(
+                username=body.username,
+                password=body.password,
+                email=body.email,
+                initial_points=body.initial_points,
+            )
+        except DatabaseIntegrityError as exc:
+            raise HTTPException(status_code=409, detail={"code": "USER_CONFLICT", "message": "用户名或邮箱已存在"}) from exc
+        audit_admin(username, "user.create", "user", str(item["id"]), request=request)
+        return {"ok": True, "data": item}
+
+    @router.patch("/users/{user_id}")
+    async def update_user(
+        user_id: int,
+        body: UserUpdateRequest,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        item = users.set_user_enabled(user_id, body.enabled)
+        if item is None:
+            raise not_found("普通用户")
+        audit_admin(
+            username,
+            "user.update_status",
+            "user",
+            str(user_id),
+            detail=f"status={'active' if body.enabled else 'disabled'}",
+            request=request,
+        )
+        return {"ok": True, "data": item}
+
+    @router.post("/users/{user_id}/reset-auth-code")
+    async def reset_user_auth_code(
+        user_id: int,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        item = users.clear_user_auth_code(user_id)
+        if item is None:
+            raise not_found("普通用户")
+        audit_admin(username, "user.reset_auth_code", "user", str(user_id), request=request)
+        return {"ok": True, "data": {"user_id": user_id, "configured": False}}
+
+    @router.post("/users/{user_id}/credits/adjust")
+    async def adjust_user_credits(
+        user_id: int,
+        body: CreditAdjustRequest,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        admin = current_admin_user(username)
+        item = users.adjust_credits(
+            user_id=user_id,
+            amount=body.amount,
+            reason=body.reason,
+            admin_user_id=admin["id"],
+        )
+        if item is None:
+            raise HTTPException(status_code=400, detail={"code": "CREDIT_ADJUST_FAILED", "message": users.error})
+        audit_admin(
+            username,
+            "credit.adjust",
+            "user",
+            str(user_id),
+            detail=f"amount={body.amount};balance_after={item['balance_after']};reason={body.reason.strip()}",
+            request=request,
+        )
+        return {"ok": True, "data": item}
+
+    @router.get("/users/{user_id}/credit-transactions")
+    async def list_user_credit_transactions(
+        user_id: int,
+        limit: int = Query(default=100, ge=1, le=500),
+        _username: str = Depends(current_admin),
+    ):
+        if users.get_user(user_id) is None:
+            raise not_found("普通用户")
+        return {"ok": True, "data": users.list_credit_transactions(user_id, limit)}
+
+    @router.get("/credit-rules")
+    async def get_credit_rules(_username: str = Depends(current_admin)):
+        return {"ok": True, "data": users.get_credit_rule()}
+
+    @router.put("/credit-rules")
+    async def update_credit_rules(
+        body: CreditRuleUpdateRequest,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        admin = current_admin_user(username)
+        item = users.update_credit_rule(
+            cost_points=body.cost_points,
+            initial_user_points=body.initial_user_points,
+            admin_user_id=admin["id"],
+        )
+        audit_admin(username, "credit_rule.update", "credit_rule", "create_mailbox", request=request)
+        return {"ok": True, "data": item}
+
+    @router.put("/pop-auth-code")
+    async def update_admin_pop_auth_code(
+        body: PopAuthCodeRequest,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        item = users.set_admin_pop_auth_code(body.auth_code)
+        if item is None:
+            raise HTTPException(status_code=400, detail={"code": "POP_AUTH_CODE_SET_FAILED", "message": users.error})
+        audit_admin(username, "admin.pop_auth_code.update", "admin", str(item["id"]), request=request)
+        return {"ok": True, "data": {"configured": True, "admin_pop_auth_code": body.auth_code}}
 
     @router.get("/overview")
     async def overview(_username: str = Depends(current_admin)):
@@ -242,42 +410,6 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
             raise not_found("域名")
         context.repository.audit(username, "domain.clear_cooldown", "domain", str(domain_id))
         return {"ok": True, "data": item}
-
-    @router.get("/client-keys")
-    async def list_client_keys(_username: str = Depends(current_admin)):
-        return {"ok": True, "data": context.repository.list_client_keys()}
-
-    @router.post("/client-keys", status_code=201)
-    async def create_client_key(body: ClientKeyCreateRequest, username: str = Depends(current_admin)):
-        try:
-            item = context.repository.create_client_key(body.name)
-        except DatabaseIntegrityError as exc:
-            raise HTTPException(status_code=409, detail={"code": "CLIENT_KEY_CONFLICT", "message": "调用方名称已存在"}) from exc
-        context.repository.audit(username, "client_key.create", "client_key", str(item["id"]))
-        return {"ok": True, "data": item}
-
-    @router.patch("/client-keys/{key_id}")
-    async def update_client_key(key_id: int, body: ClientKeyUpdateRequest, username: str = Depends(current_admin)):
-        item = context.repository.update_client_key(key_id, enabled=body.enabled)
-        if item is None:
-            raise not_found("调用密钥")
-        context.repository.audit(username, "client_key.update", "client_key", str(key_id))
-        return {"ok": True, "data": item}
-
-    @router.post("/client-keys/{key_id}/regenerate")
-    async def regenerate_client_key(key_id: int, username: str = Depends(current_admin)):
-        item = context.repository.regenerate_client_key(key_id)
-        if item is None:
-            raise not_found("调用密钥")
-        context.repository.audit(username, "client_key.regenerate", "client_key", str(key_id))
-        return {"ok": True, "data": item}
-
-    @router.delete("/client-keys/{key_id}")
-    async def delete_client_key(key_id: int, username: str = Depends(current_admin)):
-        if not context.repository.delete_client_key(key_id):
-            raise not_found("调用密钥")
-        context.repository.audit(username, "client_key.delete", "client_key", str(key_id))
-        return {"ok": True}
 
     @router.get("/mailboxes")
     async def list_mailboxes(

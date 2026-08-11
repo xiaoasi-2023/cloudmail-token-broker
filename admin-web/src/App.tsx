@@ -8,7 +8,6 @@ import {
   EditOutlined,
   GlobalOutlined,
   InboxOutlined,
-  KeyOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -17,6 +16,8 @@ import {
   SafetyCertificateOutlined,
   SettingOutlined,
   ThunderboltOutlined,
+  UserOutlined,
+  WalletOutlined,
 } from "@ant-design/icons";
 import {
   Alert,
@@ -47,9 +48,11 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { api, ApiError } from "./api";
+import { UserPortal } from "./UserApp";
 import type {
+  AdminUser,
   CloudMailInstance,
-  ClientKey,
+  CreditRule,
   DomainPayload,
   InstancePayload,
   MailboxRecord,
@@ -61,13 +64,14 @@ import type {
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
-type PageKey = "overview" | "instances" | "domains" | "clientKeys" | "mailboxes" | "logs" | "settings";
+type PageKey = "overview" | "instances" | "domains" | "users" | "creditSettings" | "mailboxes" | "logs" | "settings";
 
 const navItems = [
   { key: "overview", icon: <DashboardOutlined />, label: "运行概览" },
   { key: "instances", icon: <CloudServerOutlined />, label: "CloudMail 实例" },
   { key: "domains", icon: <GlobalOutlined />, label: "邮箱域名" },
-  { key: "clientKeys", icon: <KeyOutlined />, label: "调用密钥" },
+  { key: "users", icon: <UserOutlined />, label: "用户管理" },
+  { key: "creditSettings", icon: <WalletOutlined />, label: "积分/POP 设置" },
   { key: "mailboxes", icon: <InboxOutlined />, label: "邮箱记录" },
   { key: "logs", icon: <DatabaseOutlined />, label: "请求日志" },
   { key: "settings", icon: <SettingOutlined />, label: "系统设置" },
@@ -77,7 +81,8 @@ const pageMeta: Record<PageKey, { title: string; description: string }> = {
   overview: { title: "运行概览", description: "实例、域名与邮箱链路的实时运行摘要" },
   instances: { title: "CloudMail 实例", description: "管理上游服务连接、凭据和可用状态" },
   domains: { title: "邮箱域名", description: "维护域名归属、选择权重与冷却状态" },
-  clientKeys: { title: "调用密钥", description: "为调用项目签发、停用和重新生成 API 密钥" },
+  users: { title: "用户管理", description: "查看用户状态、积分余额与 POP 授权配置" },
+  creditSettings: { title: "积分/POP 设置", description: "配置邮箱积分规则与管理员全局 POP 授权码" },
   mailboxes: { title: "邮箱记录", description: "查看网关创建的邮箱及验证码处理状态" },
   logs: { title: "请求日志", description: "追踪业务请求、响应耗时与脱敏错误信息" },
   settings: { title: "系统设置", description: "查看部署模式、安全边界和运行参数入口" },
@@ -446,30 +451,130 @@ function DomainsPage() {
   </>;
 }
 
-function ClientKeysPage() {
+function UsersPage() {
   const { message } = AntApp.useApp();
-  const [items, setItems] = useState<ClientKey[]>([]);
+  const [items, setItems] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [name, setName] = useState("");
-  const load = useCallback(async () => { setLoading(true); try { setItems(await api.clientKeys()); } catch (e) { message.error(getErrorMessage(e)); } finally { setLoading(false); } }, [message]);
+  const [error, setError] = useState("");
+  const [adjustingUser, setAdjustingUser] = useState<AdminUser>();
+  const [saving, setSaving] = useState(false);
+  const [form] = Form.useForm<{ amount: number; reason: string }>();
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try { setItems(await api.users()); }
+    catch (e) { setError(getErrorMessage(e)); }
+    finally { setLoading(false); }
+  }, []);
   useEffect(() => { void load(); }, [load]);
-  const create = async () => { if (!name.trim()) return; setCreating(true); try { await api.createClientKey(name.trim()); message.success("调用密钥已创建"); setModalOpen(false); setName(""); await load(); } catch (e) { message.error(getErrorMessage(e)); } finally { setCreating(false); } };
-  const toggle = async (item: ClientKey, enabled: boolean) => { try { await api.updateClientKey(item.id, enabled); message.success(enabled ? "调用密钥已启用" : "调用密钥已停用"); await load(); } catch (e) { message.error(getErrorMessage(e)); } };
-  const regenerate = async (id: number) => { try { await api.regenerateClientKey(id); message.success("调用密钥已重新生成，旧密钥立即失效"); await load(); } catch (e) { message.error(getErrorMessage(e)); } };
-  const remove = async (id: number) => { try { await api.deleteClientKey(id); message.success("调用密钥已删除"); await load(); } catch (e) { message.error(getErrorMessage(e)); } };
-  const columns: ColumnsType<ClientKey> = [
-    { title: "调用方", dataIndex: "name", render: (value) => <Text strong>{value}</Text> },
-    { title: "API Key（明文）", dataIndex: "api_key", render: (value) => <Text code copyable>{value}</Text> },
-    { title: "状态", dataIndex: "enabled", width: 100, render: (enabled, item) => <Switch checked={enabled} onChange={(value) => void toggle(item, value)} checkedChildren="启用" unCheckedChildren="停用" /> },
-    { title: "最近调用", dataIndex: "last_used_at", width: 170, render: formatTime },
-    { title: "操作", key: "actions", width: 190, render: (_, item) => <Space><Popconfirm title="重新生成后旧密钥会立即失效，确认继续？" onConfirm={() => void regenerate(item.id)}><Button size="small">重新生成</Button></Popconfirm><Popconfirm title="确认删除该调用密钥？" onConfirm={() => void remove(item.id)}><Button size="small" danger>删除</Button></Popconfirm></Space> },
+
+  const updateStatus = async (user: AdminUser, enabled: boolean) => {
+    try { await api.updateUser(user.id, enabled); message.success(enabled ? "用户已启用" : "用户已停用"); await load(); }
+    catch (e) { message.error(getErrorMessage(e)); }
+  };
+  const clearAuthCode = async (user: AdminUser) => {
+    try { await api.resetUserAuthCode(user.id); message.success("用户 POP 授权码已清除"); await load(); }
+    catch (e) { message.error(getErrorMessage(e)); }
+  };
+  const adjustCredits = async () => {
+    const values = await form.validateFields();
+    if (!values.amount) { message.error("积分调整数量不能为 0"); return; }
+    setSaving(true);
+    try {
+      await api.adjustUserCredits(adjustingUser!.id, values.amount, values.reason.trim());
+      message.success("用户积分已调整");
+      setAdjustingUser(undefined);
+      form.resetFields();
+      await load();
+    } catch (e) { message.error(getErrorMessage(e)); }
+    finally { setSaving(false); }
+  };
+
+  const columns: ColumnsType<AdminUser> = [
+    { title: "用户", key: "user", render: (_, user) => <div className="primary-cell"><b>{user.username}{user.role === "admin" && <Tag className="role-tag" color="blue">管理员</Tag>}</b><span>{user.email || `用户 ID ${user.id}`}</span></div> },
+    { title: "状态", key: "status", width: 120, render: (_, user) => user.role === "admin" ? <Space size={8}>{statusTag(user.status)}<Text type="secondary">全局</Text></Space> : <Switch checked={user.status === "active"} onChange={(enabled) => void updateStatus(user, enabled)} checkedChildren="启用" unCheckedChildren="停用" /> },
+    { title: "积分余额", dataIndex: "credit_balance", width: 120, render: (value: number) => <Text className={value > 0 ? "success-text" : value < 0 ? "error-text" : ""} strong>{value} 分</Text> },
+    { title: "POP 授权码", key: "pop", width: 145, render: (_, user) => user.role === "admin" ? <Tag color={user.has_admin_pop_auth_code ? "success" : "default"}>{user.has_admin_pop_auth_code ? "已配置" : "未配置"}</Tag> : <Tag color={user.has_user_auth_code ? "success" : "default"}>{user.has_user_auth_code ? "已配置" : "未配置"}</Tag> },
+    { title: "调用密钥", key: "api_key_count", width: 105, render: (_, user) => `${user.api_key_count || 0} 个` },
+    { title: "创建时间", dataIndex: "created_at", width: 180, render: formatTime },
+    { title: "操作", key: "actions", width: 270, render: (_, user) => user.role === "admin" ? <Text type="secondary">管理员账号不参与普通用户操作</Text> : <Space wrap><Button size="small" icon={<WalletOutlined />} onClick={() => { setAdjustingUser(user); form.setFieldsValue({ amount: 0, reason: "" }); }}>调整积分</Button>{user.has_user_auth_code && <Popconfirm title="清除后该用户的 POP 授权码立即失效，确认继续？" onConfirm={() => void clearAuthCode(user)}><Button size="small" danger icon={<SafetyCertificateOutlined />}>清除授权码</Button></Popconfirm>}</Space> },
   ];
+
   return <>
-    <div className="toolbar"><div className="toolbar-copy"><Text type="secondary">调用方必须使用 X-API-Key 请求业务接口</Text><Text type="secondary">密钥按当前要求明文保存，可在此页面直接复制。</Text></div><Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>新增密钥</Button></div>
-    <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无调用密钥，业务接口暂时无法使用" /> }} scroll={{ x: 900 }} />
-    <Modal title="新增调用密钥" open={modalOpen} confirmLoading={creating} okText="创建" cancelText="取消" onOk={() => void create()} onCancel={() => setModalOpen(false)}><Form layout="vertical"><Form.Item label="调用方名称" required><Input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} placeholder="例如：image2api、kirox" /></Form.Item></Form></Modal>
+    <div className="toolbar"><div className="toolbar-copy"><Text type="secondary">共 {items.length} 个账号，普通用户可在此停用、调整积分或清除 POP 授权码</Text><Text type="secondary">用户级调用密钥由用户中心管理，管理员端不再提供旧的全局 client-keys 入口。</Text></div><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>
+    {error ? <ErrorState error={error} retry={load} /> : <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无用户数据" /> }} scroll={{ x: 1180 }} />}
+    <Modal title={`调整 ${adjustingUser?.username || "用户"} 的积分`} open={Boolean(adjustingUser)} confirmLoading={saving} okText="提交调整" cancelText="取消" onOk={() => void adjustCredits()} onCancel={() => { setAdjustingUser(undefined); form.resetFields(); }} destroyOnClose>
+      <Alert className="form-alert" type="info" showIcon message="可增加或扣减积分" description="输入正数增加积分，输入负数扣减积分；余额不能低于 0。" />
+      <Form form={form} layout="vertical" requiredMark={false}>
+        <Form.Item label="调整数量" name="amount" rules={[{ required: true, message: "请输入积分数量" }]}><InputNumber style={{ width: "100%" }} precision={0} placeholder="例如：100 或 -50" /></Form.Item>
+        <Form.Item label="调整原因" name="reason" rules={[{ required: true, message: "请输入调整原因" }, { max: 500, message: "原因不能超过 500 个字符" }]}><Input.TextArea rows={4} maxLength={500} showCount placeholder="例如：活动补发积分" /></Form.Item>
+      </Form>
+    </Modal>
+  </>;
+}
+
+function CreditSettingsPage() {
+  const { message } = AntApp.useApp();
+  const [rule, setRule] = useState<CreditRule>();
+  const [adminPopConfigured, setAdminPopConfigured] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [savingRule, setSavingRule] = useState(false);
+  const [savingPop, setSavingPop] = useState(false);
+  const [oneTimeCode, setOneTimeCode] = useState("");
+  const [ruleForm] = Form.useForm<Pick<CreditRule, "cost_points" | "initial_user_points">>();
+  const [popForm] = Form.useForm<{ auth_code: string; confirm: string }>();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [nextRule, users] = await Promise.all([api.creditRules(), api.users()]);
+      setRule(nextRule);
+      ruleForm.setFieldsValue({ cost_points: nextRule.cost_points, initial_user_points: nextRule.initial_user_points });
+      setAdminPopConfigured(Boolean(users.find((user) => user.role === "admin")?.has_admin_pop_auth_code));
+    } catch (e) { message.error(getErrorMessage(e)); }
+    finally { setLoading(false); }
+  }, [message, ruleForm]);
+  useEffect(() => { void load(); }, [load]);
+
+  const saveRule = async () => {
+    const values = await ruleForm.validateFields();
+    setSavingRule(true);
+    try { const saved = await api.updateCreditRules(values); setRule(saved); message.success("积分规则已保存"); }
+    catch (e) { message.error(getErrorMessage(e)); }
+    finally { setSavingRule(false); }
+  };
+  const savePopCode = async (values: { auth_code: string; confirm: string }) => {
+    setSavingPop(true);
+    try {
+      const result = await api.setAdminPopAuthCode(values.auth_code);
+      setOneTimeCode(result.data.admin_pop_auth_code || values.auth_code);
+      popForm.resetFields();
+      message.success(adminPopConfigured ? "全局 POP 授权码已重置" : "全局 POP 授权码已设置");
+      await load();
+    } catch (e) { message.error(getErrorMessage(e)); }
+    finally { setSavingPop(false); }
+  };
+
+  return <>
+    {oneTimeCode && <Modal open title="保存管理员全局 POP 授权码" onCancel={() => setOneTimeCode("")} onOk={() => setOneTimeCode("")} okText="我已安全保存" cancelButtonProps={{ style: { display: "none" } }} destroyOnClose><Alert type="warning" showIcon message="完整值只显示这一次" description="关闭后管理端不会再次显示该授权码，请立即保存到安全位置。" /><div className="one-time-secret"><Text code copyable={{ text: oneTimeCode }}>{oneTimeCode}</Text></div></Modal>}
+    <div className="admin-settings-grid">
+      <Card className="admin-setting-card" title={<span><WalletOutlined /> 邮箱积分规则</span>} loading={loading} extra={rule && <Text type="secondary">更新于 {formatTime(rule.updated_at)}</Text>}>
+        <Alert className="form-alert" type="info" showIcon message="规则作用于新建邮箱" description="每次创建邮箱会按单次费用扣除积分；新用户初始积分也从这里读取。" />
+        <Form form={ruleForm} layout="vertical" requiredMark={false}>
+          <Form.Item label="创建邮箱扣除积分" name="cost_points" rules={[{ required: true, message: "请输入扣除积分" }]}><InputNumber min={0} precision={0} style={{ width: "100%" }} addonAfter="分 / 次" /></Form.Item>
+          <Form.Item label="新用户初始积分" name="initial_user_points" rules={[{ required: true, message: "请输入初始积分" }]}><InputNumber min={0} precision={0} style={{ width: "100%" }} addonAfter="分" /></Form.Item>
+          <Button type="primary" loading={savingRule} onClick={() => void saveRule()}>保存积分规则</Button>
+        </Form>
+      </Card>
+      <Card className="admin-setting-card admin-pop-card" title={<span><SafetyCertificateOutlined /> 管理员全局 POP 授权码</span>} loading={loading}>
+        <div className={`admin-pop-status ${adminPopConfigured ? "ready" : "not-ready"}`}><span className="auth-status-dot" /><div><b>{adminPopConfigured ? "已配置全局授权码" : "尚未配置全局授权码"}</b><small>管理员使用该授权码登录 POP3 时，可访问管理员账号下的邮箱。</small></div></div>
+        <Form form={popForm} layout="vertical" requiredMark={false} onFinish={savePopCode} className="admin-pop-form">
+          <Form.Item label={adminPopConfigured ? "新的全局 POP 授权码" : "全局 POP 授权码"} name="auth_code" rules={[{ required: true, message: "请输入 POP 授权码" }, { min: 10, message: "授权码至少 10 位" }]}><Input.Password autoComplete="new-password" placeholder="输入新的授权码" /></Form.Item>
+          <Form.Item label="确认授权码" name="confirm" dependencies={["auth_code"]} rules={[{ required: true, message: "请再次输入授权码" }, ({ getFieldValue }) => ({ validator(_, value) { return !value || getFieldValue("auth_code") === value ? Promise.resolve() : Promise.reject(new Error("两次输入的授权码不一致")); } })]}><Input.Password autoComplete="new-password" placeholder="再次输入授权码" /></Form.Item>
+          <Button type="primary" htmlType="submit" loading={savingPop}>{adminPopConfigured ? "重置全局授权码" : "设置全局授权码"}</Button>
+        </Form>
+      </Card>
+    </div>
   </>;
 }
 
@@ -529,7 +634,7 @@ function Console({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const meta = pageMeta[page];
-  const content = useMemo(() => ({ overview: <OverviewPage />, instances: <InstancesPage />, domains: <DomainsPage />, clientKeys: <ClientKeysPage />, mailboxes: <MailboxesPage />, logs: <LogsPage />, settings: <SettingsPage /> })[page], [page]);
+  const content = useMemo(() => ({ overview: <OverviewPage />, instances: <InstancesPage />, domains: <DomainsPage />, users: <UsersPage />, creditSettings: <CreditSettingsPage />, mailboxes: <MailboxesPage />, logs: <LogsPage />, settings: <SettingsPage /> })[page], [page]);
   useEffect(() => {
     window.addEventListener("admin-unauthorized", onUnauthorized);
     return () => window.removeEventListener("admin-unauthorized", onUnauthorized);
@@ -559,5 +664,6 @@ function RootApp() {
 }
 
 export default function App() {
-  return <AntApp><RootApp /></AntApp>;
+  const isUserCenter = window.location.pathname === "/user" || window.location.pathname.startsWith("/user/");
+  return <AntApp>{isUserCenter ? <UserPortal /> : <RootApp />}</AntApp>;
 }
