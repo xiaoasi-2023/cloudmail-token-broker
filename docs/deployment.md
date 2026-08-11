@@ -53,6 +53,7 @@ SMTP_TLS=true
 
 MAILBOX_CREATE_RATE_LIMIT_PER_MINUTE=120
 MAILBOX_POLL_RATE_LIMIT_PER_MINUTE=600
+MAILBOX_SESSION_TTL_SECONDS=1800
 
 POP3_ENABLED=true
 POP3_BIND_HOST=0.0.0.0
@@ -65,6 +66,8 @@ POP3_MAX_MESSAGES=20
 ```
 
 `DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 必须不同，生产环境不能随意修改。`ADMIN_PASSWORD_HASH` 与 `ADMIN_PASSWORD` 二选一，不能同时配置，生产优先使用哈希。当前 `18110` 是普通明文 POP3，不启用 STLS 或隐式 TLS。
+
+`MAILBOX_SESSION_TTL_SECONDS` 只控制 HTTP `mailboxToken`、邮箱状态和验证码 API 的临时会话期限。普通用户 POP3 不检查该期限，可长期读取自己名下状态为 `active` 或 `expired` 且启用 POP 的邮箱。不要为了 POP3 长期使用把该值改成极大值；HTTP 临时凭证仍应保持较短有效期。
 
 开启 `USER_REGISTRATION_ENABLED=true` 时，SMTP 六项配置必须完整。`SMTP_TLS=true` 在 `465` 端口使用 SSL 连接；`SMTP_PASSWORD` 填邮箱服务商生成的 SMTP 授权码，不能提交到 Git。若不开放注册，将开关改为 `false`，用户仍可由唯一管理员创建。
 
@@ -111,6 +114,10 @@ pg_dump "$DATABASE_URL" -Fc \
 ```
 
 本次数据库升级是增量升级，但生产更新前仍必须保留 PostgreSQL 备份和 `.env` 备份。
+
+本次 POP3 生命周期调整不需要数据库迁移。拉取并启动新镜像后，现有数据库中状态为 `expired`、仍启用 POP 且未释放的邮箱会立即恢复所属普通用户的 POP3 读取权限；HTTP `mailboxToken` 仍保持原过期行为。
+
+用户中心批量创建同样不需要数据库迁移，复用现有邮箱、积分流水和幂等记录表。部署新镜像并刷新用户中心静态资源后，“我的邮箱”页面会出现“批量创建”按钮。
 
 ### 4.3 补齐注册和 SMTP 配置
 

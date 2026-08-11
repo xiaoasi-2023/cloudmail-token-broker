@@ -100,6 +100,14 @@ X-API-Key: 用户自己创建的调用密钥
 
 不要在普通日志中打印完整 `X-API-Key`、`mailboxToken`、`userAuthCode`、邮件正文或验证码。
 
+`expiresAt` 只用于判断 HTTP `mailboxToken` 和验证码 API 是否仍可调用，不得用它判断 POP3 邮箱是否可读。
+
+### 用户中心批量预建 POP 邮箱
+
+需要提前准备一批长期 POP 邮箱时，登录用户中心后可在“我的邮箱”点击“批量创建”。一次支持 1 至 50 个，最多 5 路并发，每个邮箱独立扣费并独立记录成功或失败。创建成功的邮箱会直接出现在当前用户列表中，共用该用户的 `userAuthCode`；业务程序按需选取邮箱地址即可。
+
+外部自动化仍应使用单邮箱 `POST /v1/mailboxes`，由每个业务任务维护自己的 `Idempotency-Key` 和短期 `mailboxToken`。批量预建更适合 POP 客户端长期读取，不替代需要 HTTP 验证码会话的按任务创建流程。
+
 ## 4. 查询验证码
 
 ```http
@@ -186,6 +194,8 @@ PASS 用户 userAuthCode
 
 后按邮箱归属用户校验授权，并调用该邮箱记录绑定的 CloudMail 实例查询邮件。
 
+普通用户 POP3 读取长期有效，不受创建响应 `expiresAt` 限制。邮箱状态为 `expired` 时仍可使用所属用户的 `userAuthCode` 读取；状态为 `released`、POP 被关闭、邮箱不属于当前用户或上游邮箱已物理删除时拒绝访问。重置 `userAuthCode` 后旧授权码立即失效。
+
 首期支持：
 
 - `USER`；
@@ -216,7 +226,7 @@ PASS 用户 userAuthCode
 | 400 | `DOMAIN_NOT_ALLOWED` | 使用允许域名或不指定域名 |
 | 401 | `API_KEY_INVALID` | 检查用户调用密钥 |
 | 401 | `MAILBOX_TOKEN_INVALID` | 检查邮箱 Token 和 mailboxId |
-| 401 | `MAILBOX_SESSION_EXPIRED` | 重新创建邮箱 |
+| 401 | `MAILBOX_SESSION_EXPIRED` | HTTP 会话已过期；验证码 API 不可继续调用，但符合条件的 POP3 读取不受影响 |
 | 403 | `USER_FORBIDDEN` | 确认邮箱属于当前用户 |
 | 409 | `USER_AUTH_CODE_REQUIRED` | 先在用户中心自动生成 userAuthCode |
 | 409 | `IDEMPOTENCY_CONFLICT` | 为不同参数使用新幂等键 |

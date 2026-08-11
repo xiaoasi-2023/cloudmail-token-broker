@@ -12,6 +12,7 @@ import {
   MailOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  PlusOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
   UserOutlined,
@@ -29,6 +30,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   Layout,
   Menu,
   Modal,
@@ -45,7 +47,7 @@ import type { InputRef } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { UserApiError, userApi } from "./userApi";
-import type { CreditTransaction, UserApiKey, UserAuthCodeInfo, UserMailbox, UserProfile } from "./userTypes";
+import type { BatchCreateMailboxesResult, CreditTransaction, UserApiKey, UserAuthCodeInfo, UserMailbox, UserProfile } from "./userTypes";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -92,7 +94,7 @@ function statusTag(status?: string) {
     enabled: { color: "success", text: "启用" },
     pending: { color: "processing", text: "处理中" },
     received: { color: "success", text: "已收到" },
-    expired: { color: "warning", text: "已过期" },
+    expired: { color: "warning", text: "POP 可用" },
     released: { color: "default", text: "已释放" },
     disabled: { color: "default", text: "已停用" },
     failed: { color: "error", text: "失败" },
@@ -502,6 +504,9 @@ function MailboxesPage() {
   const [purpose, setPurpose] = useState("");
   const [mailboxStatus, setMailboxStatus] = useState("");
   const [verificationStatus, setVerificationStatus] = useState("");
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchForm] = Form.useForm<{ count: number; purpose: string; domain?: string }>();
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try { setItems(await userApi.mailboxes(appliedKeyword, purpose, mailboxStatus, verificationStatus)); }
@@ -509,6 +514,23 @@ function MailboxesPage() {
     finally { setLoading(false); }
   }, [appliedKeyword, mailboxStatus, message, purpose, verificationStatus]);
   useEffect(() => { void load(); }, [load]);
+
+  const createBatch = async () => {
+    const values = await batchForm.validateFields();
+    setBatchLoading(true);
+    try {
+      const result = await userApi.createMailboxesBatch(values) as BatchCreateMailboxesResult;
+      if (result.failed) {
+        message.warning(`已创建 ${result.succeeded} 个，${result.failed} 个失败，请查看积分和邮箱列表`);
+      } else {
+        message.success(`已批量创建 ${result.succeeded} 个邮箱`);
+      }
+      setBatchOpen(false);
+      batchForm.resetFields();
+      await load();
+    } catch (error) { message.error(getErrorMessage(error)); }
+    finally { setBatchLoading(false); }
+  };
 
   const columns: ColumnsType<UserMailbox> = [
     { title: "邮箱地址", dataIndex: "address", width: 245, render: (value) => <Text copyable>{value}</Text> },
@@ -534,8 +556,16 @@ function MailboxesPage() {
   ];
 
   return <>
-    <div className="toolbar mailbox-toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索邮箱、域名或来源" style={{ width: 270 }} /><Select allowClear value={purpose || undefined} onChange={(value) => setPurpose(value || "")} placeholder="全部用途" style={{ width: 130 }} options={[{ value: "openai", label: "OpenAI" }, { value: "kiro", label: "Kiro" }, { value: "cursor", label: "Cursor" }, { value: "grok", label: "Grok" }]} /><Select allowClear value={mailboxStatus || undefined} onChange={(value) => setMailboxStatus(value || "")} placeholder="全部状态" style={{ width: 125 }} options={[{ value: "active", label: "使用中" }, { value: "expired", label: "已过期" }, { value: "released", label: "已释放" }]} /><Select allowClear value={verificationStatus || undefined} onChange={(value) => setVerificationStatus(value || "")} placeholder="验证码状态" style={{ width: 140 }} options={[{ value: "pending", label: "处理中" }, { value: "received", label: "已收到" }, { value: "timeout", label: "已超时" }, { value: "failed", label: "失败" }]} /></div><Space><Text type="secondary">{items.length} 条</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></Space></div>
+    <div className="toolbar mailbox-toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索邮箱、域名或来源" style={{ width: 270 }} /><Select allowClear value={purpose || undefined} onChange={(value) => setPurpose(value || "")} placeholder="全部用途" style={{ width: 130 }} options={[{ value: "openai", label: "OpenAI" }, { value: "kiro", label: "Kiro" }, { value: "cursor", label: "Cursor" }, { value: "grok", label: "Grok" }]} /><Select allowClear value={mailboxStatus || undefined} onChange={(value) => setMailboxStatus(value || "")} placeholder="全部状态" style={{ width: 125 }} options={[{ value: "active", label: "使用中" }, { value: "expired", label: "已过期" }, { value: "released", label: "已释放" }]} /><Select allowClear value={verificationStatus || undefined} onChange={(value) => setVerificationStatus(value || "")} placeholder="验证码状态" style={{ width: 140 }} options={[{ value: "pending", label: "处理中" }, { value: "received", label: "已收到" }, { value: "timeout", label: "已超时" }, { value: "failed", label: "失败" }]} /></div><Space><Text type="secondary">{items.length} 条</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button><Button type="primary" icon={<PlusOutlined />} onClick={() => setBatchOpen(true)}>批量创建</Button></Space></div>
     {error ? <ErrorState error={error} retry={() => void load()} /> : <Table className="dense-table" size="small" rowKey={(item) => item.id || item.mailbox_id || item.mailboxId || item.address} loading={loading} columns={columns} dataSource={items} pagination={userTablePagination} locale={{ emptyText: <Empty description="没有符合条件的邮箱记录" /> }} scroll={{ x: 980 }} />}
+    <Modal title="批量创建 POP 邮箱" open={batchOpen} confirmLoading={batchLoading} okText="开始创建" cancelText="取消" onOk={() => void createBatch()} onCancel={() => { setBatchOpen(false); batchForm.resetFields(); }} destroyOnClose>
+      <Alert className="form-alert" type="info" showIcon message="按当前积分规则逐个扣费" description="每个成功创建的邮箱都会保留在“我的邮箱”中，并可使用同一个用户级 POP 授权码读取。" />
+      <Form form={batchForm} layout="vertical" requiredMark={false} initialValues={{ count: 5, purpose: "openai" }}>
+        <Form.Item label="创建数量" name="count" rules={[{ required: true, message: "请输入创建数量" }]}><InputNumber min={1} max={50} precision={0} style={{ width: "100%" }} /></Form.Item>
+        <Form.Item label="用途" name="purpose" rules={[{ required: true, message: "请选择用途" }]}><Select options={[{ value: "openai", label: "OpenAI" }, { value: "kiro", label: "Kiro" }, { value: "cursor", label: "Cursor" }, { value: "grok", label: "Grok" }]} /></Form.Item>
+        <Form.Item label="指定域名（可选）" name="domain" rules={[{ max: 253, message: "域名长度不能超过 253 个字符" }]}><Input placeholder="留空则自动选择健康域名" /></Form.Item>
+      </Form>
+    </Modal>
   </>;
 }
 

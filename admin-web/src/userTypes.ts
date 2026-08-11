@@ -90,3 +90,11 @@ export interface UserMailbox {
   expires_at?: string | null;
   expiresAt?: string | null;
 }
+
+export interface BatchCreateMailboxesResult {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  created: UserMailbox[];
+  errors: Array<{ index: number; code: string; message: string }>;
+}

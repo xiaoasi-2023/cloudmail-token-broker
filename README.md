@@ -10,11 +10,13 @@ Xiaoasi Mail Gateway 是一个统一邮箱网关，负责管理多个 CloudMail 
 
 - 多个 CloudMail 实例和多个邮箱域名；
 - 自动、指定单域名和候选域名创建邮箱；
+- 用户中心支持一次批量创建 1 至 50 个 POP 邮箱，并直接在“我的邮箱”查看；
 - 用户中心、用户级 `X-API-Key` 和用户级 `userAuthCode`；
 - 可选的邮箱验证码自助注册，支持账号或邮箱登录；
 - 创建邮箱按管理端配置扣除积分；
 - 唯一管理员管理全部用户、邮箱、日志、实例、域名和积分；
 - 管理员独立 POP 授权码，可以读取全部未物理删除且上游仍存在的邮箱；
+- 普通用户通过长期 `userAuthCode` 读取自己名下启用 POP 的邮箱，不受 HTTP 邮箱会话过期时间影响；
 - POP3 只读取信，当前公网接入端口为 `18110`；
 - `Idempotency-Key` 幂等创建和短期 `mailboxToken`；
 - 统一验证码查询和 CloudMail Provider 适配；
@@ -58,6 +60,7 @@ GATEWAY_ENABLED=true
 DATABASE_URL=postgresql://数据库用户:数据库密码@host.docker.internal:5432/数据库名?connect_timeout=10
 DATA_ENCRYPTION_KEY=<至少32字节随机值>
 MAILBOX_SESSION_SECRET=<另一条至少32字节随机值>
+MAILBOX_SESSION_TTL_SECONDS=1800
 
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD_HASH=<推荐：pbkdf2_sha256 格式的管理员密码哈希>
@@ -86,6 +89,8 @@ POP3_MAX_MESSAGES=20
 
 `POP3_PORT=8110` 是容器内监听端口；`POP3_PUBLIC_PORT=18110` 控制用户中心展示给客户端的公网端口。Compose 同时保留 `110:8110`、`18110:8110` 和 `995:8110`，当前实际只使用 `18110`。服务仍是普通明文 POP3，`995` 映射不代表已经支持 POP3S/TLS，客户端不得使用隐式 TLS 连接该端口。
 
+`MAILBOX_SESSION_TTL_SECONDS` 只控制 HTTP `mailboxToken`、邮箱状态和验证码 API 的临时会话期限，不控制 POP3 邮箱寿命。邮箱会话显示为 `expired` 后，所属普通用户仍可使用长期 `userAuthCode` 通过 POP3 读取邮件；只有主动 `released`、关闭 `pop_enabled`、归属不匹配或上游邮箱已物理删除时才拒绝普通用户 POP3 访问。
+
 外部服务地址：
 
 ```text
@@ -113,6 +118,7 @@ POP3 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主机当�
 5. 普通用户使用账号或注册邮箱登录 `/user/`，点击按钮自动生成自己的 `userAuthCode`；生成后可长期查看和复制完整值，连接页会自动展示 POP 主机、当前公网端口及可用邮箱地址。
 6. 普通用户在用户中心创建自己的 `X-API-Key`。
 7. 使用用户密钥调用 `POST /v1/mailboxes` 创建邮箱。
+8. 需要预先准备一批 POP 邮箱时，在用户中心“我的邮箱”点击“批量创建”。
 
 ## 创建邮箱
 
@@ -141,6 +147,8 @@ curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
 }
 ```
 
+用户中心批量创建使用登录会话调用 `POST /user-api/mailboxes/batch`，一次可创建 1 至 50 个。网关最多并发创建 5 个，每个邮箱独立扣费、独立记录结果；部分失败不会删除已成功邮箱，成功项会立即出现在“我的邮箱”列表中。
+
 ## POP3 取信
 
 普通用户邮件客户端配置：
@@ -164,6 +172,8 @@ curl -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
 ```
 
 只实现只读取信：`CAPA`、`USER`、`PASS`、`STAT`、`LIST`、`UIDL`、`RETR`、`TOP`、`NOOP`、`RSET`、`QUIT`。不支持 SMTP、IMAP、附件下载和 `DELE`；邮件客户端必须关闭“从服务器删除邮件”，并设置为保留服务器上的邮件。
+
+创建响应中的 `expiresAt` 是 HTTP 临时会话期限。普通用户 POP3 读取不会在该时间到达后失效，`userAuthCode` 将持续有效，直到用户重置授权码、管理员关闭该邮箱 POP 权限或邮箱被释放。
 
 ## 查询验证码
 

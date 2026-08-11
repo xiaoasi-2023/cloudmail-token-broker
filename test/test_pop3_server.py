@@ -220,6 +220,44 @@ def test_normal_user_cannot_access_other_owner_but_admin_can_access_expired_rele
     asyncio.run(scenario())
 
 
+def test_normal_user_pop_access_ignores_session_expiry_but_respects_mailbox_controls() -> None:
+    async def scenario() -> None:
+        cases = (
+            ("active", True, True),
+            ("expired", True, True),
+            ("released", True, False),
+            ("expired", False, False),
+        )
+        for status, pop_enabled, allowed in cases:
+            mailbox = Pop3Mailbox(
+                "user@example.com",
+                "user-1",
+                status=status,
+                pop_enabled=pop_enabled,
+                expires_at=datetime.now(UTC) - timedelta(days=1),
+            )
+            provider = FakeProvider(_messages())
+            server = await _start_server(mailbox=mailbox, provider=provider)
+            try:
+                reader, writer = await asyncio.open_connection(*_address(server))
+                await reader.readline()
+                assert await _command(writer, reader, "USER user@example.com") == "+OK user accepted"
+                response = await _command(writer, reader, "PASS user-code")
+                if allowed:
+                    assert response == "+OK maildrop has 2 messages"
+                    assert provider.calls == [("user@example.com", 20)]
+                else:
+                    assert response == "-ERR authentication failed"
+                    assert provider.calls == []
+                await _command(writer, reader, "QUIT")
+                writer.close()
+                await writer.wait_closed()
+            finally:
+                await server.close()
+
+    asyncio.run(scenario())
+
+
 def test_connection_limit_returns_sanitized_error() -> None:
     async def scenario() -> None:
         mailbox = Pop3Mailbox("user@example.com", "user-1")

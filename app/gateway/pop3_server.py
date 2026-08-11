@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Protocol, TypeAlias
 
 from app.gateway.business_models import MailMessage
@@ -393,15 +393,10 @@ class _Pop3Session:
             return True
         if mailbox.owner_user_id is None or str(mailbox.owner_user_id) != str(principal.user_id):
             return False
-        if not mailbox.pop_enabled or mailbox.status != "active":
+        if not mailbox.pop_enabled:
             return False
-        if mailbox.expires_at is not None:
-            expires_at = mailbox.expires_at
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=UTC)
-            if expires_at <= datetime.now(UTC):
-                return False
-        return True
+        # HTTP mailboxToken expiry must not disable long-lived POP3 access.
+        return mailbox.status.strip().lower() in {"active", "expired"}
 
     async def _load_messages(self, mailbox: Pop3Mailbox) -> list[MailMessage]:
         provider = self.server.message_provider

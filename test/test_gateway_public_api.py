@@ -15,6 +15,8 @@ from app.gateway.mailbox_service import MailboxGatewayService
 from app.gateway.mailbox_token import MailboxTokenSigner
 from app.gateway.public_api import create_gateway_router
 from app.gateway.database_business_store import DatabaseGatewayBusinessStore
+from app.gateway.user_api import UserApiContext, create_user_router
+from app.gateway.user_auth import UserSessionService
 from app.gateway.user_repository import UserRepository
 
 
@@ -323,3 +325,83 @@ def test_user_mailbox_queries_are_owner_isolated(tmp_path: Path) -> None:
     assert own.status_code == 200
     assert other.status_code == 403
     assert other.json()["code"] == "MAILBOX_ACCESS_DENIED"
+
+
+def test_user_center_batch_creation_is_idempotent_and_charges_each_mailbox(tmp_path: Path) -> None:
+    database, store = seed_database(tmp_path / "user-mailbox-batch.db")
+    users = UserRepository(database)
+    user = users.create_user(username="batch-user", password="batch-user-password", initial_points=3)
+    users.set_user_auth_code(user["id"], "batch-pop-code-123")
+    provider = FakeProvider()
+    service = MailboxGatewayService(
+        store,
+        FakeRegistry(provider),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+    )
+    app = FastAPI()
+    app.include_router(
+        create_user_router(
+            UserApiContext(
+                users=users,
+                sessions=UserSessionService(database, users),
+                cookie_secure=False,
+                mailbox_service=service,
+            )
+        )
+    )
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/user-api/auth/login",
+            json={"username": "batch-user", "password": "batch-user-password"},
+        )
+        assert login.status_code == 200
+        headers = {"Idempotency-Key": "batch-task-1"}
+        payload = {"count": 3, "purpose": "openai", "domain": "one.test"}
+        first = client.post("/user-api/mailboxes/batch", headers=headers, json=payload)
+        second = client.post("/user-api/mailboxes/batch", headers=headers, json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["data"]["succeeded"] == 3
+    assert first.json()["data"]["failed"] == 0
+    assert [item["mailboxId"] for item in first.json()["data"]["created"]] == [
+        item["mailboxId"] for item in second.json()["data"]["created"]
+    ]
+    assert len(provider.created) == 3
+    assert len(users.list_user_mailboxes(user["id"])) == 3
+    credits = users.get_credits(user["id"])
+    assert credits is not None
+    assert credits["balance"] == 0
+
+
+def test_user_center_batch_creation_requires_pop_auth_code(tmp_path: Path) -> None:
+    database, store = seed_database(tmp_path / "user-mailbox-batch-auth.db")
+    users = UserRepository(database)
+    users.create_user(username="no-pop-code", password="no-pop-code-password", initial_points=3)
+    service = MailboxGatewayService(
+        store,
+        FakeRegistry(FakeProvider()),  # type: ignore[arg-type]
+        MailboxTokenSigner("s" * 32),
+    )
+    app = FastAPI()
+    app.include_router(
+        create_user_router(
+            UserApiContext(
+                users=users,
+                sessions=UserSessionService(database, users),
+                cookie_secure=False,
+                mailbox_service=service,
+            )
+        )
+    )
+
+    with TestClient(app) as client:
+        client.post(
+            "/user-api/auth/login",
+            json={"username": "no-pop-code", "password": "no-pop-code-password"},
+        )
+        response = client.post("/user-api/mailboxes/batch", json={"count": 2})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "USER_AUTH_CODE_REQUIRED"

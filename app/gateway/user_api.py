@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.gateway.database import DatabaseIntegrityError
+from app.gateway.gateway_schemas import CreateMailboxRequest
 from app.gateway.registration import UserRegistrationError, UserRegistrationService
 from app.gateway.user_auth import UserSessionService
 from app.gateway.user_repository import UserRepository
+
+if TYPE_CHECKING:
+    from app.gateway.mailbox_service import MailboxGatewayService
 
 
 @dataclass(slots=True)
@@ -22,6 +27,7 @@ class UserApiContext:
     registration: UserRegistrationService | None = None
     pop3_public_host: str = "pop.cloudmail.xiaoasi.xyz"
     pop3_public_port: int = 18110
+    mailbox_service: MailboxGatewayService | None = None
 
 
 class UserLoginRequest(BaseModel):
@@ -69,6 +75,10 @@ class UserRegisterCodeRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
 
 
+class BatchCreateMailboxesRequest(CreateMailboxRequest):
+    count: int = Field(default=1, ge=1, le=50)
+
+
 def create_user_router(context: UserApiContext) -> APIRouter:
     router = APIRouter(prefix="/user-api", tags=["user-center"])
     cookie_name = "xiaoasi_user_session"
@@ -90,13 +100,18 @@ def create_user_router(context: UserApiContext) -> APIRouter:
         mailboxes = context.users.list_user_mailboxes(
             user_id,
             limit=500,
-            status="active",
         )
         return {
             **data,
             "pop_host": context.pop3_public_host,
             "pop_port": context.pop3_public_port,
-            "mailboxes": [str(item["address"]) for item in mailboxes if item.get("address")],
+            "mailboxes": [
+                str(item["address"])
+                for item in mailboxes
+                if item.get("address")
+                and bool(item.get("pop_enabled"))
+                and str(item.get("status") or "").strip().lower() in {"active", "expired"}
+            ],
         }
 
     @router.post("/auth/login")
@@ -241,6 +256,39 @@ def create_user_router(context: UserApiContext) -> APIRouter:
                 status=status,
                 verification_status=verification_status,
             ),
+        }
+
+    @router.post("/mailboxes/batch")
+    async def create_mailboxes_batch(
+        body: BatchCreateMailboxesRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=256),
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        if context.mailbox_service is None:
+            raise HTTPException(status_code=503, detail={"code": "MAILBOX_SERVICE_UNAVAILABLE", "message": "邮箱服务当前不可用"})
+        auth_code = context.users.get_user_pop_auth_code(int(user["id"]))
+        if not auth_code.get("configured"):
+            raise HTTPException(status_code=409, detail={"code": "USER_AUTH_CODE_REQUIRED", "message": "请先生成用户级 POP 授权码"})
+        batch_key = str(idempotency_key or f"user-{user['id']}-{uuid.uuid4().hex}").strip()
+        if not batch_key:
+            batch_key = f"user-{user['id']}-{uuid.uuid4().hex}"
+        request.state.client_name = "user-center-batch"
+        request.state.user_id = int(user["id"])
+        request_data = CreateMailboxRequest.model_validate(body.model_dump(exclude={"count"}))
+        result = await context.mailbox_service.create_mailboxes(
+            request_data,
+            body.count,
+            idempotency_prefix=f"batch:{batch_key}",
+            client_name="user-center-batch",
+            user_id=int(user["id"]),
+        )
+        return {
+            "ok": True,
+            "data": {
+                **result,
+                "created": [item.model_dump(by_alias=True) for item in result["created"]],
+            },
         }
 
     @router.post("/auth/register", status_code=201)

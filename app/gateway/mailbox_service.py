@@ -79,6 +79,52 @@ class MailboxGatewayService:
                     else:
                         self._idempotency_locks[internal_key] = (lock, current[1] - 1)
 
+    async def create_mailboxes(
+        self,
+        request: CreateMailboxRequest,
+        count: int,
+        *,
+        idempotency_prefix: str,
+        client_name: str = "",
+        user_id: int | None = None,
+        max_concurrency: int = 5,
+    ) -> dict[str, object]:
+        """Create a bounded batch while preserving single-mailbox accounting."""
+        normalized_count = max(1, min(int(count), 50))
+        semaphore = asyncio.Semaphore(max(1, min(int(max_concurrency), normalized_count)))
+
+        async def create_one(index: int) -> tuple[int, MailboxData | None, dict[str, object] | None]:
+            item_key = f"{idempotency_prefix}:{index}"
+            async with semaphore:
+                try:
+                    data = await self.create_mailbox(
+                        request,
+                        item_key,
+                        client_name,
+                        user_id,
+                    )
+                    return index, data, None
+                except GatewayBusinessError as exc:
+                    return index, None, {"index": index, "code": exc.code, "message": exc.message}
+                except Exception:
+                    return index, None, {
+                        "index": index,
+                        "code": "MAILBOX_CREATE_FAILED",
+                        "message": "邮箱创建失败，请稍后重试",
+                    }
+
+        results = await asyncio.gather(*(create_one(index) for index in range(normalized_count)))
+        results.sort(key=lambda item: item[0])
+        created = [data for _index, data, _error in results if data is not None]
+        failed = [error for _index, _data, error in results if error is not None]
+        return {
+            "requested": normalized_count,
+            "succeeded": len(created),
+            "failed": len(failed),
+            "created": created,
+            "errors": failed,
+        }
+
     async def _create_mailbox(
         self,
         request: CreateMailboxRequest,

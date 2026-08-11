@@ -34,6 +34,7 @@
 | GET/PUT | `/user-api/auth-code` | 查询或保存用户 POP 授权码明文及 POP3 连接参数 |
 | GET | `/user-api/credits` | 查询积分余额和流水摘要 |
 | GET | `/user-api/mailboxes` | 查询自己的邮箱记录 |
+| POST | `/user-api/mailboxes/batch` | 批量创建 1 至 50 个自己的 POP 邮箱 |
 
 ### 普通业务 API
 
@@ -73,7 +74,7 @@
 
 管理员执行 `POST /admin-api/users/{userId}/reset-auth-code` 时，只会立即使该用户旧授权码失效并清除“已配置”状态，不向管理员返回新授权码明文。普通用户需要登录用户中心点击按钮重新生成自己的 `userAuthCode`；这样管理员拥有全量邮箱访问权限，但不会接触普通用户授权码明文。
 
-`GET /user-api/auth-code` 只允许当前登录用户访问，返回该用户自己的 `user_auth_code`、公网 `pop_host`、由 `POP3_PUBLIC_PORT` 配置的 `pop_port` 和该用户可用的邮箱地址列表。当前生产配置为 `18110`。普通用户授权码按明文保存，因此用户下次登录后仍可查看和复制；从旧版哈希字段升级的授权码无法反推，需要用户重置一次。用户调用密钥同样按明文保存并在 `GET /user-api/api-keys` 中返回给所属用户；旧哈希密钥需要调用重新生成接口后才能完整显示。
+`GET /user-api/auth-code` 只允许当前登录用户访问，返回该用户自己的 `user_auth_code`、公网 `pop_host`、由 `POP3_PUBLIC_PORT` 配置的 `pop_port` 和该用户可用的邮箱地址列表；列表同时包含状态为 `active` 或 `expired` 且启用 POP 的邮箱。当前生产配置为 `18110`。普通用户授权码按明文保存，因此用户下次登录后仍可查看和复制；从旧版哈希字段升级的授权码无法反推，需要用户重置一次。用户调用密钥同样按明文保存并在 `GET /user-api/api-keys` 中返回给所属用户；旧哈希密钥需要调用重新生成接口后才能完整显示。
 
 列表查询补充：
 
@@ -159,7 +160,47 @@ X-API-Key: xmk_user_key
 }
 ```
 
-`mailboxToken` 只在创建成功响应中返回，不包含 CloudMail Token、管理员信息或邮箱内部密码。
+`mailboxToken` 只在创建成功响应中返回，不包含 CloudMail Token、管理员信息或邮箱内部密码。响应中的 `expiresAt` 是 HTTP 临时会话期限，不是 POP3 邮箱过期时间。
+
+### 3.1 用户中心批量创建
+
+```http
+POST /user-api/mailboxes/batch
+Content-Type: application/json
+Idempotency-Key: batch-task-20260812-001
+Cookie: xiaoasi_user_session=<用户登录会话>
+```
+
+```json
+{
+  "count": 10,
+  "purpose": "openai",
+  "domain": "mail-a.example.com"
+}
+```
+
+- `count` 范围为 1 至 50；
+- 必须先配置用户级 `userAuthCode`；
+- 不传 `domain` 时自动选择健康域名；
+- 服务端最多同时创建 5 个，每一项都复用单邮箱的归属、积分和退款规则；
+- 同一用户使用相同 `Idempotency-Key` 和相同参数重试时，不重复创建或扣费；
+- 允许部分成功，成功邮箱直接进入当前用户的“我的邮箱”列表，失败项在 `errors` 中逐条返回；
+- 网络超时后先刷新邮箱和积分列表确认结果，不要立即使用新的幂等键重复提交。
+
+响应示例：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "requested": 10,
+    "succeeded": 9,
+    "failed": 1,
+    "created": [{ "mailboxId": "mbx_example", "address": "user1234@mail-a.example.com" }],
+    "errors": [{ "index": 9, "code": "INSUFFICIENT_CREDITS", "message": "积分余额不足" }]
+  }
+}
+```
 
 ## 4. HTTP 邮箱鉴权
 
@@ -231,6 +272,8 @@ Authorization: Mailbox <mailboxToken>
 
 普通用户授权码只能访问该用户自己的邮箱。用户重置授权码后，旧授权码立即失效。
 
+POP3 生命周期与 HTTP `mailboxToken` 解耦：普通用户可读取自己名下状态为 `active` 或 `expired` 且 `pop_enabled=true` 的邮箱，不检查 `expiresAt`。状态为 `released`、关闭 POP、邮箱归属不匹配或上游邮箱已物理删除时仍拒绝访问。HTTP 状态和验证码接口继续要求未过期的 `mailboxToken`。
+
 ### 管理员
 
 ```text
@@ -263,7 +306,7 @@ Authorization: Mailbox <mailboxToken>
 | 400 | `REGISTER_CODE_INVALID` | 注册验证码错误、过期或输错次数过多 |
 | 401 | `API_KEY_INVALID` | 用户调用密钥无效或已撤销 |
 | 401 | `MAILBOX_TOKEN_INVALID` | 邮箱凭证无效 |
-| 401 | `MAILBOX_SESSION_EXPIRED` | 邮箱会话凭证过期 |
+| 401 | `MAILBOX_SESSION_EXPIRED` | HTTP 邮箱会话凭证过期；不影响符合条件的 POP3 读取 |
 | 401 | `USER_AUTH_CODE_INVALID` | 普通用户 POP 授权码错误 |
 | POP `-ERR` | `ADMIN_POP_AUTH_CODE_INVALID` | 管理员全局 POP 授权码错误 |
 | 403 | `USER_FORBIDDEN` | 普通用户访问其他用户资源 |

@@ -1,4 +1,4 @@
-import type { CreditSummary, UserApiKey, UserAuthCodeInfo, UserMailbox, UserProfile } from "./userTypes";
+import type { BatchCreateMailboxesResult, CreditSummary, UserApiKey, UserAuthCodeInfo, UserMailbox, UserProfile } from "./userTypes";
 
 type ApiEnvelope<T> = {
   ok?: boolean;
@@ -144,4 +144,14 @@ export const userApi = {
     if (verificationStatus.trim()) params.set("verification_status", verificationStatus.trim());
     return asList<UserMailbox>(unwrap(await request<ApiEnvelope<unknown> | unknown>(`/mailboxes?${params.toString()}`)));
   },
+  createMailboxesBatch: async (data: { count: number; purpose: string; domain?: string }) =>
+    unwrap(await request<ApiEnvelope<BatchCreateMailboxesResult> | BatchCreateMailboxesResult>("/mailboxes/batch", {
+      method: "POST",
+      headers: { "Idempotency-Key": window.crypto.randomUUID() },
+      body: JSON.stringify({
+        count: data.count,
+        purpose: data.purpose,
+        domain: data.domain?.trim() || undefined,
+      }),
+    })),
 };

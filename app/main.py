@@ -97,6 +97,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ttl_seconds=resolved_settings.user_registration_code_ttl_seconds,
                 cooldown_seconds=resolved_settings.user_registration_code_cooldown_seconds,
             )
+        business_store = DatabaseGatewayBusinessStore(database, cipher)
+        gateway_providers = CloudMailProviderRegistry()
+        gateway_service = MailboxGatewayService(
+            business_store,
+            gateway_providers,
+            MailboxTokenSigner(resolved_settings.mailbox_session_secret),
+            mailbox_ttl_seconds=resolved_settings.mailbox_session_ttl_seconds,
+        )
         user_router = create_user_router(
             UserApiContext(
                 users=user_repository,
@@ -106,15 +114,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 registration=registration_service,
                 pop3_public_host=resolved_settings.pop3_public_host,
                 pop3_public_port=resolved_settings.pop3_public_port,
+                mailbox_service=gateway_service,
             )
-        )
-        business_store = DatabaseGatewayBusinessStore(database, cipher)
-        gateway_providers = CloudMailProviderRegistry()
-        gateway_service = MailboxGatewayService(
-            business_store,
-            gateway_providers,
-            MailboxTokenSigner(resolved_settings.mailbox_session_secret),
-            mailbox_ttl_seconds=resolved_settings.mailbox_session_ttl_seconds,
         )
         if resolved_settings.pop3_enabled:
             pop3_provider = Pop3GatewayProvider(
@@ -233,10 +234,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     content={"code": exc.code, "message": exc.message},
                     headers={"X-Request-ID": request_id},
                 )
-        if resolved_settings.gateway_enabled and request.url.path.startswith("/v1/mailboxes"):
+        is_user_batch_create = (
+            request.method == "POST" and request.url.path == "/user-api/mailboxes/batch"
+        )
+        if resolved_settings.gateway_enabled and (
+            request.url.path.startswith("/v1/mailboxes") or is_user_batch_create
+        ):
             client_key = request.client.host if request.client else "unknown"
             try:
-                if request.method == "POST" and request.url.path == "/v1/mailboxes":
+                if request.method == "POST" and (
+                    request.url.path == "/v1/mailboxes" or is_user_batch_create
+                ):
                     rate_limiter.check(
                         f"gateway:create:{client_key}",
                         resolved_settings.mailbox_create_rate_limit_per_minute,
@@ -270,7 +278,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     headers={"X-Request-ID": request_id},
                 )
         response = await call_next(request)
-        if gateway_repository is not None and request.url.path.startswith("/v1/mailboxes"):
+        if gateway_repository is not None and (
+            request.url.path.startswith("/v1/mailboxes") or is_user_batch_create
+        ):
             try:
                 gateway_repository.log_request(
                     request_id=request_id,
