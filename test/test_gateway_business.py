@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
+from app.gateway.addressing import generate_mailbox_address
 from app.gateway.business_errors import GatewayBusinessError
 from app.gateway.business_models import (
     CloudMailInstanceConfig,
@@ -319,7 +320,16 @@ def test_default_address_pattern_uses_random_name_and_four_digits() -> None:
 
     data = asyncio.run(service.create_mailbox(CreateMailboxRequest(domain="one.test"), None))
 
-    assert re.fullmatch(r"[a-z]+\d{4}@one\.test", data.address)
+    assert re.fullmatch(r"[A-Z][A-Za-z]+[A-Z][A-Za-z]+\d{4}@one\.test", data.address)
+
+
+def test_default_address_pattern_sanitizes_faker_name(monkeypatch) -> None:
+    monkeypatch.setattr("app.gateway.addressing._FAKER.first_name", lambda: "Mary-Jane")
+    monkeypatch.setattr("app.gateway.addressing._FAKER.last_name", lambda: "O'Neil")
+
+    address = generate_mailbox_address("one.test")
+
+    assert re.fullmatch(r"MaryJaneONeil\d{4}@one\.test", address)
 
 
 def test_address_collision_regenerates_before_saving_mailbox() -> None:

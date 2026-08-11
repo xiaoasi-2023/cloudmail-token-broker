@@ -80,7 +80,7 @@ X-API-Key: xmk_xxxxxxxxx
 
 - `domain` 与 `domains` 不能同时传；
 - `addressPattern` 非必填，默认 `name_digits_4`；
-- `name` 非必填；未提供 `name` 和兼容字段 `prefix` 时，网关随机选择内置英文名；
+- `name` 非必填；未提供 `name` 和兼容字段 `prefix` 时，网关通过 Faker `en_US` 数据随机生成英文名和英文姓；
 - `prefix` 是旧客户端兼容字段，新接入统一使用 `name`；
 - 指定单域名失败时不切换其他域名；
 - 候选范围和自动模式可以跨 CloudMail 实例失败切换；
@@ -109,9 +109,9 @@ X-API-Key: xmk_xxxxxxxxx
 
 | `addressPattern` | 示例 | 说明 |
 | --- | --- | --- |
-| `name_digits_4` | `olivia4821` | 默认规则，姓名基础值加 4 位数字 |
-| `name_digits_6` | `olivia482193` | 姓名基础值加 6 位数字 |
-| `name_random_6` | `oliviak3m8x2` | 姓名基础值加 6 位小写字母或数字 |
+| `name_digits_4` | `OliviaCarter4821` | 默认规则，随机英文名和英文姓加 4 位数字 |
+| `name_digits_6` | `OliviaCarter482193` | 姓名基础值加 6 位数字 |
+| `name_random_6` | `OliviaCarterk3m8x2` | 姓名基础值加 6 位小写字母或数字 |
 | `random_12` | `k3m8x2p9q4vd` | 纯 12 位随机小写字母或数字 |
 | `legacy_prefix_random` | `image2api-k3m8x2p9q4vd` | 兼容旧版“前缀-12位随机串”格式 |
 

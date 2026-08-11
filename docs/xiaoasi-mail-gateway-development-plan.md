@@ -346,7 +346,7 @@ image2api4821@mail-a.example.com
 
 ### 8.2 用户名生成规则
 
-调用方可以传 `addressPattern` 和 `name`。`addressPattern` 默认是 `name_digits_4`，即“姓名基础值 + 4 位数字”。没有提供 `name` 时，网关随机选择内置英文名。当前内置规则包括：
+调用方可以传 `addressPattern` 和 `name`。`addressPattern` 默认是 `name_digits_4`，即“姓名基础值 + 4 位数字”。没有提供 `name` 时，网关使用 Faker `en_US` 人名数据生成类似 `DanielCarter2153` 的邮箱用户名；内置姓名池只作为异常兜底。当前规则包括：
 
 - `name_digits_4`；
 - `name_digits_6`；

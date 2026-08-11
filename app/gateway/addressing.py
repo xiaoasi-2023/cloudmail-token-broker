@@ -4,17 +4,35 @@ import re
 import secrets
 import string
 
+from faker import Faker
+
 from app.gateway.business_errors import GatewayBusinessError
 
 
 _INVALID_PREFIX = re.compile(r"[^a-z0-9]+")
+_INVALID_NAME_PART = re.compile(r"[^A-Za-z]+")
 _RESERVED_PREFIXES = {"admin", "administrator", "postmaster", "root", "support", "system"}
 _ALPHABET = string.ascii_lowercase + string.digits
-_NAMES = (
-    "alex", "alice", "amelia", "ava", "ben", "chloe", "daniel", "ella",
-    "emma", "ethan", "eva", "grace", "henry", "ivy", "jack", "james",
-    "leo", "liam", "lily", "lucas", "mia", "mila", "nina", "noah",
-    "oliver", "olivia", "oscar", "ryan", "sophia", "theo", "william", "zoe",
+_FAKER = Faker("en_US")
+_FIRST_NAMES = (
+    "Daniel", "Ben", "James", "John", "Michael", "David", "Chris", "Ryan", "Kevin", "Brian",
+    "Matthew", "Andrew", "Jason", "Justin", "Eric", "Adam", "Mark", "Paul", "Steven", "Thomas",
+    "Robert", "William", "Joseph", "Charles", "Anthony", "Joshua", "Nicholas", "Jonathan", "Aaron", "Nathan",
+    "Samuel", "Dylan", "Ethan", "Lucas", "Mason", "Logan", "Owen", "Caleb", "Noah", "Liam",
+    "Emma", "Olivia", "Ava", "Sophia", "Mia", "Isabella", "Charlotte", "Amelia", "Harper", "Evelyn",
+    "Emily", "Abigail", "Elizabeth", "Sofia", "Avery", "Ella", "Scarlett", "Grace", "Chloe", "Victoria",
+    "Riley", "Aria", "Lily", "Aubrey", "Zoey", "Penelope", "Layla", "Nora", "Camila", "Hannah",
+    "Alex", "Sam", "Taylor", "Jordan", "Casey", "Morgan", "Jamie", "Cameron", "Drew", "Reese",
+)
+_LAST_NAMES = (
+    "Carter", "Evans", "Smith", "Johnson", "Williams", "Brown", "Jones", "Miller", "Davis", "Wilson",
+    "Moore", "Taylor", "Anderson", "Thomas", "Jackson", "White", "Harris", "Martin", "Thompson", "Garcia",
+    "Martinez", "Robinson", "Clark", "Rodriguez", "Lewis", "Lee", "Walker", "Hall", "Allen", "Young",
+    "King", "Wright", "Scott", "Green", "Baker", "Adams", "Nelson", "Hill", "Ramirez", "Campbell",
+    "Mitchell", "Roberts", "Carter", "Phillips", "Evans", "Turner", "Torres", "Parker", "Collins", "Edwards",
+    "Stewart", "Flores", "Morris", "Nguyen", "Murphy", "Rivera", "Cook", "Rogers", "Morgan", "Peterson",
+    "Cooper", "Reed", "Bailey", "Bell", "Gomez", "Kelly", "Howard", "Ward", "Cox", "Diaz",
+    "Richardson", "Wood", "Watson", "Brooks", "Bennett", "Gray", "James", "Reyes", "Cruz", "Hughes",
 )
 ADDRESS_PATTERNS = {
     "name_digits_4",
@@ -49,7 +67,7 @@ def generate_mailbox_address(
     if pattern not in ADDRESS_PATTERNS:
         raise GatewayBusinessError("ADDRESS_PATTERN_INVALID", "邮箱用户名生成规则无效", 400)
 
-    random_name = secrets.choice(_NAMES)
+    random_name = _random_human_name()
     base = sanitize_prefix(name or prefix, default=random_name)
     if pattern == "name_digits_4":
         local_part = base + _random_digits(4)
@@ -66,6 +84,14 @@ def generate_mailbox_address(
 
 def _random_digits(length: int) -> str:
     return "".join(secrets.choice(string.digits) for _ in range(length))
+
+
+def _random_human_name() -> str:
+    first_name = _INVALID_NAME_PART.sub("", _FAKER.first_name())
+    last_name = _INVALID_NAME_PART.sub("", _FAKER.last_name())
+    if first_name and last_name:
+        return first_name + last_name
+    return secrets.choice(_FIRST_NAMES) + secrets.choice(_LAST_NAMES)
 
 
 def _random_text(length: int) -> str:

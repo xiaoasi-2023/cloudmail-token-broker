@@ -41,10 +41,10 @@ X-API-Key: 管理端为调用方创建的密钥
 }
 ```
 
-没有传用户名规则时，默认生成“随机英文名 + 4 位数字”，例如：
+没有传用户名规则时，网关使用 Faker 的 `en_US` 人名数据生成“随机英文名 + 随机英文姓 + 4 位数字”，例如：
 
 ```text
-olivia4821@可用域名
+OliviaCarter4821@可用域名
 ```
 
 完整请求字段：
@@ -55,7 +55,7 @@ olivia4821@可用域名
 | `domain` | string | 否 | 无 | 指定一个邮箱域名 |
 | `domains` | string[] | 否 | 无 | 限定可选择的邮箱域名范围 |
 | `addressPattern` | string | 否 | `name_digits_4` | 邮箱用户名生成规则 |
-| `name` | string | 否 | 随机内置英文名 | 用户名基础值，例如 `kirox`、`image2api` |
+| `name` | string | 否 | Faker 随机英文名和英文姓 | 用户名基础值，例如 `kirox`、`image2api` |
 | `prefix` | string | 否 | 空 | 旧客户端兼容字段；新项目使用 `name` |
 
 `domain` 和 `domains` 不能同时传。不传时，网关根据实例状态、域名状态和权重自动选择。
@@ -64,9 +64,9 @@ olivia4821@可用域名
 
 | 规则 | 示例 | 适用场景 |
 | --- | --- | --- |
-| `name_digits_4` | `olivia4821` | 默认，地址简短自然 |
-| `name_digits_6` | `olivia482193` | 需要更低碰撞概率 |
-| `name_random_6` | `oliviak3m8x2` | 字母数字混合后缀 |
+| `name_digits_4` | `OliviaCarter4821` | 默认，姓名形式自然且碰撞概率低 |
+| `name_digits_6` | `OliviaCarter482193` | 需要更低碰撞概率 |
+| `name_random_6` | `OliviaCarterk3m8x2` | 字母数字混合后缀 |
 | `random_12` | `k3m8x2p9q4vd` | 不需要可读名称 |
 | `legacy_prefix_random` | `image2api-k3m8x2p9q4vd` | 兼容旧版格式 |
 
@@ -83,7 +83,7 @@ olivia4821@可用域名
 
 上面的域名仅用于展示请求格式。调用方不知道生产域名池时应省略 `domain` 和 `domains`，让网关自动选择；只有网关管理员明确提供了允许域名后才传指定范围。
 
-`name` 会转为小写，只保留 ASCII 字母和数字，最长使用 16 个字符。空值、中文或 `admin`、`root`、`support` 等保留名称会自动替换为随机英文名。
+显式传入的 `name` 会转为小写，只保留 ASCII 字母和数字，最长使用 16 个字符。空值、中文或 `admin`、`root`、`support` 等保留名称会自动替换为随机英文名和英文姓；自动生成的姓名保留首字母大写格式。
 
 如果生成地址已存在，网关会自动重新生成，最多尝试 5 次，不会把已有邮箱返回给本次任务。
 
