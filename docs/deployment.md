@@ -82,19 +82,101 @@ ports:
 
 容器内部使用 `8110` 是为了避免非 root 进程直接绑定特权端口；用户和外部邮件客户端仍然只配置 `110`。不要映射或开放 `995`。
 
-## 4. 启动容器
+## 4. 已有线上部署升级
+
+本节用于已经运行 `cloudmail-token-broker` 的服务器。本次是原地升级，不是首次部署，不需要重新创建数据库，也不要再次执行 `TRUNCATE`、`DROP TABLE` 或旧数据清理脚本。
+
+### 4.1 等待镜像构建完成
+
+GitHub `main` 推送后，先在阿里云容器镜像服务确认 `latest` 自动构建成功。构建未完成时不要在服务器执行更新，否则可能仍拉取到旧镜像。
+
+### 4.2 备份线上配置和数据库
+
+```bash
+cd /www/docker/cloudmail-token-broker
+
+cp -a .env ".env.backup-$(date +%Y%m%d-%H%M%S)"
+
+export DATABASE_URL="$(awk -F= '$1=="DATABASE_URL"{sub(/^[^=]*=/,""); print; exit}' .env)"
+test -n "$DATABASE_URL" || { echo "DATABASE_URL 未配置"; exit 1; }
+
+pg_dump "$DATABASE_URL" -Fc \
+  -f "xiaoasi-mail-before-v5-$(date +%Y%m%d-%H%M%S).dump"
+```
+
+本次数据库升级是增量升级，但生产更新前仍必须保留 PostgreSQL 备份和 `.env` 备份。
+
+### 4.3 补齐注册和 SMTP 配置
+
+保留现有数据库、加密密钥、管理员配置和 POP3 配置，在服务器 `.env` 中确认以下配置存在：
+
+```dotenv
+USER_REGISTRATION_ENABLED=true
+USER_REGISTRATION_CODE_TTL_SECONDS=600
+USER_REGISTRATION_CODE_COOLDOWN_SECONDS=60
+USER_REGISTRATION_RATE_LIMIT_PER_MINUTE=10
+
+SMTP_HOST=smtp.163.com
+SMTP_PORT=465
+SMTP_USERNAME=<实际发件邮箱>
+SMTP_PASSWORD=<实际 SMTP 授权码>
+SMTP_FROM=<实际发件邮箱>
+SMTP_TLS=true
+```
+
+不要把实际 `SMTP_PASSWORD` 发到群聊、提交到 Git 或写入部署日志。
+
+### 4.4 拉取镜像并重建现有容器
 
 ```bash
 cd /www/docker/cloudmail-token-broker
 docker compose pull
 docker compose up -d --force-recreate
 docker compose ps
-docker compose logs --tail=100 cloudmail-token-broker
+docker compose logs --tail=200 cloudmail-token-broker
 ```
 
-容器应继续以非 root 用户运行。POP3 服务和 FastAPI 必须是独立的 TCP/HTTP 生命周期，不能使用 HTTP 路由模拟 POP3。
+应用启动时会自动将数据库结构升级到版本 `5`，新增用户注册验证码表和管理员 POP 授权码明文字段。该升级不会删除现有用户、积分、调用密钥、邮箱记录、请求日志、实例或域名。
 
-FastAPI 同时挂载 `/admin/` 和 `/user/` 静态入口；宝塔只需将 HTTPS API 域名反向代理到 `127.0.0.1:8788`，不需要为用户中心单独配置站点或容器。
+可以确认数据库版本：
+
+```bash
+export DATABASE_URL="$(awk -F= '$1=="DATABASE_URL"{sub(/^[^=]*=/,""); print; exit}' .env)"
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c \
+  "SELECT version FROM gateway_schema"
+```
+
+预期版本为 `5`。
+
+### 4.5 升级后验证
+
+```bash
+curl -fsS http://127.0.0.1:8788/healthz
+curl -fsS http://127.0.0.1:8788/user-api/auth/registration-config
+curl -fsSI https://cloudmail.xiaoasi.xyz/user/
+nc -vz 127.0.0.1 110
+printf 'QUIT\r\n' | nc -v 127.0.0.1 110
+```
+
+健康检查应继续返回 `pop3Listening: true`，注册配置应返回 `enabled: true`，POP3 欢迎语应正常返回。
+
+随后按以下业务顺序点验：
+
+1. 管理员登录 `/admin/`，进入“积分/POP 设置”。
+2. 如果页面提示当前管理员 POP 授权码是旧版哈希数据，重新输入原授权码或自动生成新值并保存；保存后可随时显示和复制明文。
+3. 打开 `/user/`，点击“没有账号？使用邮箱注册”，使用一个真实收件邮箱验证 SMTP 验证码邮件。
+4. 注册成功后确认用户自动登录、初始积分正确，并设置用户级 POP 授权码和创建用户调用密钥。
+5. 使用该用户调用密钥创建一个测试邮箱，确认积分扣除和邮箱归属正确。
+6. 使用测试邮箱地址、端口 `110` 和用户 POP 授权码完成一次真实 POP3 登录取信。
+7. 使用管理员全局 POP 授权码读取该测试邮箱，确认管理员仍可访问全部邮箱。
+
+容器应继续以非 root 用户运行。POP3 服务和 FastAPI 必须是独立的 TCP/HTTP 生命周期，不能使用 HTTP 路由模拟 POP3。FastAPI 同时挂载 `/admin/` 和 `/user/` 静态入口；宝塔只需将 HTTPS API 域名反向代理到 `127.0.0.1:8788`。
+
+### 4.6 本次版本回滚注意事项
+
+数据库版本 `5` 的新增表和字段属于增量结构，旧镜像通常会忽略它们。但是管理员重新保存全局 POP 授权码后，旧哈希字段会被清空；如果再回滚到只支持哈希的旧镜像，管理员 POP 登录将不可用。
+
+因此需要回滚到旧镜像时，应同时恢复本次更新前的 PostgreSQL 备份和 `.env` 备份；不要只切换镜像后继续使用已经升级并写入新数据的数据库。
 
 ## 5. HTTPS 和 POP3 DNS
 

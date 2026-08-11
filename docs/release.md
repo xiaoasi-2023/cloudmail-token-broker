@@ -55,9 +55,12 @@ git push origin main
 阿里云自动构建成功后，在服务器项目目录执行：
 
 ```bash
+cd /www/docker/cloudmail-token-broker
+cp -a .env ".env.backup-$(date +%Y%m%d-%H%M%S)"
 docker compose pull
 docker compose up -d --force-recreate
 docker compose ps
+docker compose logs --tail=200 cloudmail-token-broker
 ```
 
 验证：
@@ -69,6 +72,8 @@ docker inspect -f '{{.Config.Image}}' cloudmail-token-broker
 
 如果使用 `latest`，必须先执行 `docker compose pull`，只执行 `restart` 不会更新镜像。
 
+当前邮箱注册和管理员 POP 明文管理版本会把数据库结构自动升级到版本 `5`。已有线上部署更新前必须备份 PostgreSQL，并在 `.env` 中补齐 SMTP 和用户注册配置；不能再次执行旧数据清理、`TRUNCATE` 或 `DROP TABLE`。完整命令和业务点验顺序见 [宝塔部署手册的“已有线上部署升级”](deployment.md#4-已有线上部署升级)。
+
 ## 5. 回滚
 
 如果阿里云保留了上一版本标签，将 `.env` 中的 `IMAGE_NAME` 改为上一版本的完整镜像地址，再执行：
@@ -79,3 +84,5 @@ docker compose up -d --force-recreate
 ```
 
 如果当前只配置了 `latest` 自动构建，建议在阿里云增加 Git Tag 构建规则后再用于正式生产，便于按明确版本回滚。
+
+数据库版本 `5` 已新增用户注册验证码数据和管理员 POP 授权码明文字段。管理员保存明文授权码后若回滚到只支持旧哈希字段的镜像，必须同步恢复更新前数据库备份，不能只回滚镜像。
