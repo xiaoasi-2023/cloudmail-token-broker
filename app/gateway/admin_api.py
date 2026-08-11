@@ -435,8 +435,18 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
     @router.get("/request-logs")
     async def list_request_logs(
         limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0),
+        keyword: str = Query(default="", max_length=100),
+        status_group: str = Query(default="", max_length=32),
         _username: str = Depends(current_admin),
     ):
-        return {"ok": True, "data": context.repository.list_request_logs(limit, offset)}
+        return {
+            "ok": True,
+            "data": context.repository.list_request_logs(
+                limit,
+                offset,
+                keyword=keyword,
+                status_group=status_group,
+            ),
+        }
 
     return router

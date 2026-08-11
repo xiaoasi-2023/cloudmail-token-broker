@@ -7,7 +7,7 @@
 普通调用方需要先拥有一个普通用户账号：
 
 1. 登录用户中心；
-2. 设置用户级 `userAuthCode`；
+2. 在用户中心自动生成用户级 `userAuthCode`；
 3. 创建自己的 `X-API-Key`；
 4. 确认积分余额；
 5. 使用该密钥调用网关创建邮箱。
@@ -26,7 +26,7 @@ POP3：        pop.cloudmail.xiaoasi.xyz:110
 ## 2. 接入流程
 
 ```text
-用户中心设置 userAuthCode 和 X-API-Key
+用户中心自动生成 userAuthCode，并创建 X-API-Key
   → 使用 X-API-Key 创建邮箱
   → 保存 mailboxId、address、mailboxToken
   → 使用 address 触发第三方验证邮件
@@ -68,7 +68,7 @@ X-API-Key: 用户自己创建的调用密钥
 
 - `X-API-Key` 属于有效普通用户；
 - 用户状态为可用；
-- 用户已经设置 `userAuthCode`；
+- 用户已经自动生成 `userAuthCode`；
 - 用户积分余额足够；
 - 请求参数和幂等键一致。
 
@@ -174,7 +174,7 @@ Authorization: Mailbox <mailboxToken>
 端口：110
 安全性：普通 POP3
 用户名：创建成功返回的完整 address
-密码：当前用户设置的 userAuthCode
+密码：当前用户生成的 userAuthCode
 ```
 
 网关收到：
@@ -218,7 +218,7 @@ PASS 用户 userAuthCode
 | 401 | `MAILBOX_TOKEN_INVALID` | 检查邮箱 Token 和 mailboxId |
 | 401 | `MAILBOX_SESSION_EXPIRED` | 重新创建邮箱 |
 | 403 | `USER_FORBIDDEN` | 确认邮箱属于当前用户 |
-| 409 | `USER_AUTH_CODE_REQUIRED` | 先在用户中心设置 userAuthCode |
+| 409 | `USER_AUTH_CODE_REQUIRED` | 先在用户中心自动生成 userAuthCode |
 | 409 | `IDEMPOTENCY_CONFLICT` | 为不同参数使用新幂等键 |
 | 402 | `INSUFFICIENT_CREDITS` | 联系管理员增加积分 |
 | 429 | `RATE_LIMITED` | 降低请求频率并退避 |

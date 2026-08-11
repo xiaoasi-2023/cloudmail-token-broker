@@ -59,6 +59,9 @@ export interface MailboxRecord {
 export interface RequestLog {
   id: number;
   request_id?: string;
+  user_id?: number;
+  user_username?: string;
+  user_email?: string;
   method?: string;
   path?: string;
   source?: string;

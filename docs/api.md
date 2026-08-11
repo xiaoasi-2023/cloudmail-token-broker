@@ -30,7 +30,7 @@
 | GET | `/user-api/me` | 当前用户信息 |
 | GET/POST | `/user-api/api-keys` | 查询或创建用户调用密钥 |
 | DELETE | `/user-api/api-keys/{keyId}` | 撤销调用密钥 |
-| PUT | `/user-api/auth-code` | 设置或重置用户 POP 授权码 |
+| PUT | `/user-api/auth-code` | 保存用户中心自动生成的用户 POP 授权码 |
 | GET | `/user-api/credits` | 查询积分余额和流水摘要 |
 | GET | `/user-api/mailboxes` | 查询自己的邮箱记录 |
 
@@ -70,7 +70,13 @@
 
 管理员接口只使用管理员会话，不需要用户 `X-API-Key` 或 `mailboxToken`。当前 HTTP 管理 API 提供全部邮箱记录和请求日志查询；管理员查看邮件正文使用 POP3 `110` + 管理员全局 POP 授权码，不提供独立的 HTTP 邮件内容、刷新、释放或邮箱 POP 开关接口。用户释放自己的邮箱仍使用普通业务 API 的 `DELETE /v1/mailboxes/{id}`。
 
-管理员执行 `POST /admin-api/users/{userId}/reset-auth-code` 时，只会立即使该用户旧授权码失效并清除“已配置”状态，不向管理员返回新授权码明文。普通用户需要登录用户中心重新设置自己的 `userAuthCode`；这样管理员拥有全量邮箱访问权限，但不会接触普通用户授权码明文。
+管理员执行 `POST /admin-api/users/{userId}/reset-auth-code` 时，只会立即使该用户旧授权码失效并清除“已配置”状态，不向管理员返回新授权码明文。普通用户需要登录用户中心点击按钮重新生成自己的 `userAuthCode`；这样管理员拥有全量邮箱访问权限，但不会接触普通用户授权码明文。
+
+列表查询补充：
+
+- `GET /user-api/mailboxes` 支持 `keyword`、`purpose`、`status`、`verification_status`，只查询当前登录用户的邮箱；返回字段包含当前用户有权查看的 `verification_code`，用户中心可直接复制已识别验证码。
+- `GET /admin-api/request-logs` 支持 `keyword` 和 `status_group`；`keyword` 可匹配接口、错误码、调用密钥名称、用户名或用户邮箱，`status_group` 可取 `success`、`client_error`、`server_error`。
+- 请求日志返回 `user_id`、`user_username`、`user_email` 和调用密钥名称，便于管理员确认实际调用人；日志仍不记录授权码、Token、验证码或邮件正文。
 
 ### 邮箱验证码注册
 

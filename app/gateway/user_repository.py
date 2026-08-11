@@ -636,15 +636,46 @@ class UserRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_user_mailboxes(self, user_id: int, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def list_user_mailboxes(
+        self,
+        user_id: int,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        keyword: str = "",
+        purpose: str = "",
+        status: str = "",
+        verification_status: str = "",
+    ) -> list[dict[str, Any]]:
+        conditions = ["m.owner_user_id=?"]
+        params: list[Any] = [user_id]
+        normalized_keyword = keyword.strip().lower()
+        if normalized_keyword:
+            like_keyword = f"%{normalized_keyword}%"
+            conditions.append(
+                "(LOWER(m.address) LIKE ? OR LOWER(d.domain) LIKE ? OR "
+                "LOWER(m.source) LIKE ? OR LOWER(m.purpose) LIKE ?)"
+            )
+            params.extend([like_keyword, like_keyword, like_keyword, like_keyword])
+        if purpose.strip():
+            conditions.append("LOWER(m.purpose)=?")
+            params.append(purpose.strip().lower())
+        if status.strip():
+            conditions.append("LOWER(m.status)=?")
+            params.append(status.strip().lower())
+        if verification_status.strip():
+            conditions.append("LOWER(m.verification_status)=?")
+            params.append(verification_status.strip().lower())
+        params.extend([limit, offset])
         with self.database.read() as connection:
             rows = connection.execute(
                 """SELECT m.id, m.address, m.purpose, m.source, m.status,
-                m.verification_status, m.pop_enabled, m.created_at, m.expires_at,
+                m.verification_status, m.verification_code, m.pop_enabled, m.created_at, m.expires_at,
                 m.updated_at, d.domain
                 FROM mailboxes m LEFT JOIN mail_domains d ON d.id=m.domain_id
-                WHERE m.owner_user_id=? ORDER BY m.created_at DESC LIMIT ? OFFSET ?""",
-                (user_id, limit, offset),
+                WHERE """ + " AND ".join(conditions) + """
+                ORDER BY m.created_at DESC LIMIT ? OFFSET ?""",
+                params,
             ).fetchall()
         return [{**dict(row), "pop_enabled": bool(row["pop_enabled"])} for row in rows]
 

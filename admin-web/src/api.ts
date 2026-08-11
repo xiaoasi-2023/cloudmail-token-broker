@@ -86,8 +86,12 @@ export const api = {
     if (purpose.trim()) params.set("purpose", purpose.trim());
     return (await request<ApiEnvelope<MailboxRecord[]>>(`/mailboxes?${params.toString()}`)).data;
   },
-  requestLogs: async (limit = 100, offset = 0) =>
-    (await request<ApiEnvelope<RequestLog[]>>(`/request-logs?limit=${limit}&offset=${offset}`)).data,
+  requestLogs: async (limit = 100, offset = 0, keyword = "", statusGroup = "") => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (keyword.trim()) params.set("keyword", keyword.trim());
+    if (statusGroup.trim()) params.set("status_group", statusGroup.trim());
+    return (await request<ApiEnvelope<RequestLog[]>>(`/request-logs?${params.toString()}`)).data;
+  },
   users: async () => (await request<ApiEnvelope<AdminUser[]>>("/users")).data,
   updateUser: (id: number, enabled: boolean) =>
     request<ApiEnvelope<AdminUser>>(`/users/${id}`, { method: "PATCH", body: JSON.stringify({ enabled }) }),

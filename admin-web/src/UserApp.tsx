@@ -33,6 +33,7 @@ import {
   Menu,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Spin,
   Statistic,
@@ -105,6 +106,13 @@ function authCodeConfigured(user: UserProfile) {
 
 function creditBalance(user: UserProfile) {
   return Number(user.credits ?? user.credit_balance ?? user.creditBalance ?? 0);
+}
+
+function generateUserAuthCode(length = 32) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const randomValues = new Uint8Array(length);
+  window.crypto.getRandomValues(randomValues);
+  return Array.from(randomValues, (value) => alphabet[value & 63]).join("");
 }
 
 function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
@@ -367,20 +375,19 @@ function ApiKeysPage() {
 
 function AuthCodePage({ user, onConfigured }: { user: UserProfile; onConfigured: () => void }) {
   const { message } = AntApp.useApp();
-  const [form] = Form.useForm<{ userAuthCode: string; confirm: string }>();
   const [saving, setSaving] = useState(false);
   const [oneTimeCode, setOneTimeCode] = useState("");
   const configured = authCodeConfigured(user);
 
-  const submit = async (values: { userAuthCode: string; confirm: string }) => {
+  const generate = async () => {
     setSaving(true);
     try {
-      const result = await userApi.setAuthCode(values.userAuthCode);
-      const returnedCode = result.userAuthCode || result.user_auth_code || result.authCode || "";
+      const generatedCode = generateUserAuthCode();
+      const result = await userApi.setAuthCode(generatedCode);
+      const returnedCode = result.userAuthCode || result.user_auth_code || result.authCode || generatedCode;
       setOneTimeCode(returnedCode);
-      form.resetFields();
       onConfigured();
-      message.success(configured ? "POP 授权码已重置，旧值立即失效" : "POP 授权码已设置");
+      message.success(configured ? "POP 授权码已自动重置，旧值立即失效" : "POP 授权码已自动生成");
     } catch (error) { message.error(getErrorMessage(error)); }
     finally { setSaving(false); }
   };
@@ -392,13 +399,10 @@ function AuthCodePage({ user, onConfigured }: { user: UserProfile; onConfigured:
         <div className={`auth-status ${configured ? "ready" : "not-ready"}`}><span className="auth-status-dot" /><div><b>{configured ? "授权码已配置" : "尚未配置授权码"}</b><small>{configured ? "可以使用该用户的邮箱地址 + userAuthCode 读取 POP3 邮件" : "创建邮箱前需要先设置用户级授权码"}</small></div></div>
         <Descriptions column={1} size="small" className="auth-connection-info"><Descriptions.Item label="POP 主机">由部署环境提供</Descriptions.Item><Descriptions.Item label="端口">110</Descriptions.Item><Descriptions.Item label="用户名">你的邮箱完整地址</Descriptions.Item><Descriptions.Item label="密码">当前用户 userAuthCode</Descriptions.Item></Descriptions>
       </Card>
-      <Card title={configured ? "重置 userAuthCode" : "设置 userAuthCode"}>
-        <Alert className="form-alert" type={configured ? "warning" : "info"} showIcon message={configured ? "重置后旧授权码立即失效" : "授权码用于该用户全部邮箱的 POP3 登录"} description="用户中心不会读取或显示历史授权码明文。" />
-        <Form form={form} layout="vertical" requiredMark={false} onFinish={submit}>
-          <Form.Item label="新的 userAuthCode" name="userAuthCode" rules={[{ required: true, message: "请输入新的 userAuthCode" }, { min: 10, message: "授权码至少 10 位" }]}><Input.Password autoComplete="new-password" placeholder="输入新的授权码" /></Form.Item>
-          <Form.Item label="确认 userAuthCode" name="confirm" dependencies={["userAuthCode"]} rules={[{ required: true, message: "请再次输入授权码" }, ({ getFieldValue }) => ({ validator(_, value) { return !value || getFieldValue("userAuthCode") === value ? Promise.resolve() : Promise.reject(new Error("两次输入的授权码不一致")); } })]}><Input.Password autoComplete="new-password" placeholder="再次输入新的授权码" /></Form.Item>
-          <Button type="primary" htmlType="submit" loading={saving}>{configured ? "重置授权码" : "保存授权码"}</Button>
-        </Form>
+      <Card className="user-auth-action-card" title={configured ? "重置 userAuthCode" : "生成 userAuthCode"}>
+        <Alert className="form-alert" type={configured ? "warning" : "info"} showIcon message={configured ? "重置后旧授权码立即失效" : "授权码用于该用户全部邮箱的 POP3 登录"} description="系统将自动生成高强度授权码，无需手动输入或重复确认。" />
+        <div className="auth-code-auto-panel"><KeyOutlined /><div><b>{configured ? "生成新的随机授权码" : "自动创建随机授权码"}</b><small>{configured ? "点击按钮后立即替换当前授权码，并弹窗展示新值。" : "生成成功后会弹窗展示完整值，请及时复制保存。"}</small></div></div>
+        <Button type="primary" icon={<ReloadOutlined />} loading={saving} onClick={() => void generate()}>{configured ? "重置并自动生成" : "自动生成授权码"}</Button>
       </Card>
     </div>
   </>;
@@ -437,27 +441,45 @@ function MailboxesPage() {
   const [items, setItems] = useState<UserMailbox[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const [appliedKeyword, setAppliedKeyword] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [mailboxStatus, setMailboxStatus] = useState("");
+  const [verificationStatus, setVerificationStatus] = useState("");
   const load = useCallback(async () => {
     setLoading(true); setError("");
-    try { setItems(await userApi.mailboxes()); }
+    try { setItems(await userApi.mailboxes(appliedKeyword, purpose, mailboxStatus, verificationStatus)); }
     catch (err) { const value = getErrorMessage(err); setError(value); message.error(value); }
     finally { setLoading(false); }
-  }, [message]);
+  }, [appliedKeyword, mailboxStatus, message, purpose, verificationStatus]);
   useEffect(() => { void load(); }, [load]);
 
   const columns: ColumnsType<UserMailbox> = [
-    { title: "邮箱地址", dataIndex: "address", render: (value) => <Text copyable>{value}</Text> },
-    { title: "用途 / 来源", key: "purpose", responsive: ["md"], render: (_, item) => <div className="primary-cell"><b>{item.purpose || "未标记"}</b><span>{item.source || "业务调用"}</span></div> },
-    { title: "状态", dataIndex: "status", width: 100, render: statusTag },
-    { title: "验证码状态", key: "verification", width: 120, render: (_, item) => statusTag(item.verification_status || item.verificationStatus) },
-    { title: "创建时间", key: "created_at", width: 180, render: (_, item) => formatTime(item.created_at || item.createdAt) },
-    { title: "过期时间", key: "expires_at", width: 180, render: (_, item) => formatTime(item.expires_at || item.expiresAt) },
+    { title: "邮箱地址", dataIndex: "address", width: 245, render: (value) => <Text copyable>{value}</Text> },
+    { title: "用途 / 来源", key: "purpose", width: 180, responsive: ["md"], render: (_, item) => <div className="mailbox-context"><b>{item.purpose || "未标记"}</b><span>（{item.source || "业务调用"}）</span></div> },
+    { title: "域名", dataIndex: "domain", width: 170, responsive: ["lg"], render: (value) => value || "—" },
+    { title: "状态", dataIndex: "status", width: 90, render: statusTag },
+    {
+      title: "验证码",
+      key: "verification",
+      width: 135,
+      render: (_, item) => {
+        const code = item.verification_code || item.verificationCode || "";
+        const status = item.verification_status || item.verificationStatus;
+        return code
+          ? <Text code copyable={{ text: code }}>{code}</Text>
+          : status === "received"
+            ? <Tag>旧记录未保存</Tag>
+            : statusTag(status);
+      },
+    },
+    { title: "创建时间", key: "created_at", width: 170, render: (_, item) => <span className="mailbox-created-at">{formatTime(item.created_at || item.createdAt)}</span> },
+    { title: "过期时间", key: "expires_at", width: 170, responsive: ["xl"], render: (_, item) => <span className="mailbox-created-at">{formatTime(item.expires_at || item.expiresAt)}</span> },
   ];
 
   return <>
-    <Alert className="page-alert" type="info" showIcon message="邮箱记录只展示当前用户自己的资源" description="邮箱内部密码、CloudMail Token、完整邮件正文和其他用户记录不会在用户中心显示。" />
-    <div className="toolbar"><Text type="secondary">共 {items.length} 个邮箱记录</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>
-    {error ? <ErrorState error={error} retry={() => void load()} /> : <Table rowKey={(item) => item.id || item.mailbox_id || item.mailboxId || item.address} loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无邮箱记录" /> }} scroll={{ x: 930 }} />}
+    <div className="toolbar mailbox-toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索邮箱、域名或来源" style={{ width: 270 }} /><Select allowClear value={purpose || undefined} onChange={(value) => setPurpose(value || "")} placeholder="全部用途" style={{ width: 130 }} options={[{ value: "openai", label: "OpenAI" }, { value: "kiro", label: "Kiro" }, { value: "cursor", label: "Cursor" }, { value: "grok", label: "Grok" }]} /><Select allowClear value={mailboxStatus || undefined} onChange={(value) => setMailboxStatus(value || "")} placeholder="全部状态" style={{ width: 125 }} options={[{ value: "active", label: "使用中" }, { value: "expired", label: "已过期" }, { value: "released", label: "已释放" }]} /><Select allowClear value={verificationStatus || undefined} onChange={(value) => setVerificationStatus(value || "")} placeholder="验证码状态" style={{ width: 140 }} options={[{ value: "pending", label: "处理中" }, { value: "received", label: "已收到" }, { value: "timeout", label: "已超时" }, { value: "failed", label: "失败" }]} /></div><Space><Text type="secondary">{items.length} 条</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></Space></div>
+    {error ? <ErrorState error={error} retry={() => void load()} /> : <Table className="dense-table" size="small" rowKey={(item) => item.id || item.mailbox_id || item.mailboxId || item.address} loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="没有符合条件的邮箱记录" /> }} scroll={{ x: 980 }} />}
   </>;
 }
 

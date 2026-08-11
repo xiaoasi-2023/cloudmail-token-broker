@@ -197,9 +197,24 @@ def create_user_router(context: UserApiContext) -> APIRouter:
     async def mailboxes(
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
+        keyword: str = Query(default="", max_length=100),
+        purpose: str = Query(default="", max_length=32),
+        status: str = Query(default="", max_length=32),
+        verification_status: str = Query(default="", max_length=32),
         user: dict[str, Any] = Depends(current_user),
     ):
-        return {"ok": True, "data": context.users.list_user_mailboxes(user["id"], limit, offset)}
+        return {
+            "ok": True,
+            "data": context.users.list_user_mailboxes(
+                user["id"],
+                limit,
+                offset,
+                keyword=keyword,
+                purpose=purpose,
+                status=status,
+                verification_status=verification_status,
+            ),
+        }
 
     @router.post("/auth/register", status_code=201)
     async def register(body: UserRegisterRequest):

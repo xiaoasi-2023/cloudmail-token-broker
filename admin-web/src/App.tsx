@@ -498,18 +498,18 @@ function UsersPage() {
   };
 
   const columns: ColumnsType<AdminUser> = [
-    { title: "用户", key: "user", render: (_, user) => <div className="primary-cell"><b>{user.username}{user.role === "admin" && <Tag className="role-tag" color="blue">管理员</Tag>}</b><span>{user.email || `用户 ID ${user.id}`}</span></div> },
-    { title: "状态", key: "status", width: 120, render: (_, user) => user.role === "admin" ? <Space size={8}>{statusTag(user.status)}<Text type="secondary">全局</Text></Space> : <Switch checked={user.status === "active"} onChange={(enabled) => void updateStatus(user, enabled)} checkedChildren="启用" unCheckedChildren="停用" /> },
-    { title: "积分余额", dataIndex: "credit_balance", width: 120, render: (value: number) => <Text className={value > 0 ? "success-text" : value < 0 ? "error-text" : ""} strong>{value} 分</Text> },
-    { title: "POP 授权码", key: "pop", width: 145, render: (_, user) => user.role === "admin" ? <Tag color={user.has_admin_pop_auth_code ? "success" : "default"}>{user.has_admin_pop_auth_code ? "已配置" : "未配置"}</Tag> : <Tag color={user.has_user_auth_code ? "success" : "default"}>{user.has_user_auth_code ? "已配置" : "未配置"}</Tag> },
-    { title: "调用密钥", key: "api_key_count", width: 105, render: (_, user) => `${user.api_key_count || 0} 个` },
-    { title: "创建时间", dataIndex: "created_at", width: 180, render: formatTime },
-    { title: "操作", key: "actions", width: 270, render: (_, user) => user.role === "admin" ? <Text type="secondary">管理员账号不参与普通用户操作</Text> : <Space wrap><Button size="small" icon={<WalletOutlined />} onClick={() => { setAdjustingUser(user); form.setFieldsValue({ amount: 0, reason: "" }); }}>调整积分</Button>{user.has_user_auth_code && <Popconfirm title="清除后该用户的 POP 授权码立即失效，确认继续？" onConfirm={() => void clearAuthCode(user)}><Button size="small" danger icon={<SafetyCertificateOutlined />}>清除授权码</Button></Popconfirm>}</Space> },
+    { title: "用户", key: "user", width: 280, render: (_, user) => <div className="user-identity-cell"><span className={`user-avatar ${user.role === "admin" ? "admin" : ""}`}>{(user.username || "U").slice(0, 1).toUpperCase()}</span><div><div className="user-name-line"><b>{user.username}</b><span className={`role-pill ${user.role === "admin" ? "admin" : "user"}`}>{user.role === "admin" ? "管理员" : "普通用户"}</span></div><small>{user.email || "未绑定邮箱"}<i>·</i>ID #{user.id}</small></div></div> },
+    { title: "状态", key: "status", width: 105, render: (_, user) => user.role === "admin" ? statusTag(user.status) : <Switch size="small" checked={user.status === "active"} onChange={(enabled) => void updateStatus(user, enabled)} checkedChildren="启用" unCheckedChildren="停用" /> },
+    { title: "积分", dataIndex: "credit_balance", width: 95, render: (value: number) => <Text className={value > 0 ? "success-text" : value < 0 ? "error-text" : ""} strong>{value} 分</Text> },
+    { title: "POP 授权码", key: "pop", width: 120, render: (_, user) => user.role === "admin" ? <Tag color={user.has_admin_pop_auth_code ? "success" : "default"}>{user.has_admin_pop_auth_code ? "已配置" : "未配置"}</Tag> : <Tag color={user.has_user_auth_code ? "success" : "default"}>{user.has_user_auth_code ? "已配置" : "未配置"}</Tag> },
+    { title: "调用密钥", key: "api_key_count", width: 90, render: (_, user) => `${user.api_key_count || 0} 个` },
+    { title: "创建时间", dataIndex: "created_at", width: 170, render: (value) => <span className="mailbox-created-at">{formatTime(value)}</span> },
+    { title: "操作", key: "actions", width: 225, render: (_, user) => user.role === "admin" ? <Tag>系统账号</Tag> : <Space size={6} wrap><Button size="small" icon={<WalletOutlined />} onClick={() => { setAdjustingUser(user); form.setFieldsValue({ amount: 0, reason: "" }); }}>调整积分</Button>{user.has_user_auth_code && <Popconfirm title="清除后该用户的 POP 授权码立即失效，确认继续？" onConfirm={() => void clearAuthCode(user)}><Button size="small" danger icon={<SafetyCertificateOutlined />}>清除授权码</Button></Popconfirm>}</Space> },
   ];
 
   return <>
-    <div className="toolbar"><div className="toolbar-copy"><Text type="secondary">共 {items.length} 个账号，普通用户可在此停用、调整积分或清除 POP 授权码</Text><Text type="secondary">用户级调用密钥由用户中心管理，管理员端不再提供旧的全局 client-keys 入口。</Text></div><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>
-    {error ? <ErrorState error={error} retry={load} /> : <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无用户数据" /> }} scroll={{ x: 1180 }} />}
+    <div className="toolbar"><Text type="secondary">共 {items.length} 个账号，可停用用户、调整积分或清除 POP 授权码</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>
+    {error ? <ErrorState error={error} retry={load} /> : <Table className="dense-table user-management-table" size="small" rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无用户数据" /> }} scroll={{ x: 1085 }} />}
     <Modal title={`调整 ${adjustingUser?.username || "用户"} 的积分`} open={Boolean(adjustingUser)} confirmLoading={saving} okText="提交调整" cancelText="取消" onOk={() => void adjustCredits()} onCancel={() => { setAdjustingUser(undefined); form.resetFields(); }} destroyOnClose>
       <Alert className="form-alert" type="info" showIcon message="可增加或扣减积分" description="输入正数增加积分，输入负数扣减积分；余额不能低于 0。" />
       <Form form={form} layout="vertical" requiredMark={false}>
@@ -638,39 +638,39 @@ function MailboxesPage() {
   const load = useCallback(async () => { setLoading(true); setError(""); try { setItems(await api.mailboxes(100, 0, appliedKeyword, purpose)); } catch (e) { setError(getErrorMessage(e)); } finally { setLoading(false); } }, [appliedKeyword, purpose]);
   useEffect(() => { void load(); }, [load]);
   const columns: ColumnsType<MailboxRecord> = [
-    { title: "邮箱地址", dataIndex: "address", render: (v) => <Text copyable>{v}</Text> },
-    { title: "用途 / 调用方", key: "source", responsive: ["md"], render: (_, r) => <div className="primary-cell"><b>{r.purpose || "未标记"}</b><span>{r.source || "未知调用方"}</span></div> },
-    { title: "域名", dataIndex: "domain", responsive: ["lg"] },
-    { title: "所属实例", dataIndex: "instance_name", responsive: ["lg"] },
-    { title: "邮箱状态", dataIndex: "status", width: 100, render: statusTag },
+    { title: "邮箱地址", dataIndex: "address", width: 225, render: (v) => <Text copyable>{v}</Text> },
+    { title: "用途 / 调用方", key: "source", width: 165, responsive: ["md"], render: (_, r) => <div className="mailbox-context"><b>{r.purpose || "未标记"}</b><span>（{r.source || "未知调用方"}）</span></div> },
+    { title: "域名 / 实例", key: "route", width: 210, responsive: ["lg"], render: (_, r) => <div className="mailbox-context route"><b>{r.domain || "—"}</b><span>（{r.instance_name || "未绑定实例"}）</span></div> },
+    { title: "状态", dataIndex: "status", width: 85, render: statusTag },
     {
       title: "验证码",
       key: "verification_code",
-      width: 150,
+      width: 125,
       render: (_, record) => record.verification_code
         ? <Text code copyable={{ text: record.verification_code }}>{record.verification_code}</Text>
         : record.verification_status === "received"
           ? <Tag>旧记录未保存</Tag>
           : statusTag(record.verification_status),
     },
-    { title: "创建时间", dataIndex: "created_at", width: 205, render: (value) => <span className="mailbox-created-at">{formatTime(value)}</span> },
+    { title: "创建时间", dataIndex: "created_at", width: 165, render: (value) => <span className="mailbox-created-at">{formatTime(value)}</span> },
   ];
-  return <><div className="toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索邮箱、域名或调用方" style={{ width: 300 }} /><Select allowClear value={purpose || undefined} onChange={(value) => setPurpose(value || "")} placeholder="全部类型" style={{ width: 150 }} options={[{ value: "openai", label: "OpenAI" }, { value: "kiro", label: "Kiro" }, { value: "cursor", label: "Cursor" }, { value: "grok", label: "Grok" }]} /></div><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>{error ? <ErrorState error={error} retry={load} /> : <Table rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="没有符合条件的邮箱记录" /> }} scroll={{ x: 1065 }} />}</>;
+  return <><div className="toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索邮箱、域名或调用方" style={{ width: 280 }} /><Select allowClear value={purpose || undefined} onChange={(value) => setPurpose(value || "")} placeholder="全部类型" style={{ width: 140 }} options={[{ value: "openai", label: "OpenAI" }, { value: "kiro", label: "Kiro" }, { value: "cursor", label: "Cursor" }, { value: "grok", label: "Grok" }]} /></div><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>{error ? <ErrorState error={error} retry={load} /> : <Table className="dense-table" size="small" rowKey="id" loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="没有符合条件的邮箱记录" /> }} scroll={{ x: 975 }} />}</>;
 }
 
 function LogsPage() {
   const [items, setItems] = useState<RequestLog[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
-  const load = useCallback(async () => { setLoading(true); setError(""); try { setItems(await api.requestLogs()); } catch (e) { setError(getErrorMessage(e)); } finally { setLoading(false); } }, []);
+  const [keyword, setKeyword] = useState(""); const [appliedKeyword, setAppliedKeyword] = useState(""); const [statusGroup, setStatusGroup] = useState("");
+  const load = useCallback(async () => { setLoading(true); setError(""); try { setItems(await api.requestLogs(100, 0, appliedKeyword, statusGroup)); } catch (e) { setError(getErrorMessage(e)); } finally { setLoading(false); } }, [appliedKeyword, statusGroup]);
   useEffect(() => { void load(); }, [load]);
   const columns: ColumnsType<RequestLog> = [
-    { title: "时间", dataIndex: "created_at", width: 170, render: formatTime },
-    { title: "请求", key: "request", render: (_, r) => <div className="primary-cell"><b>{r.method || "—"} {r.path || "—"}</b><span>{r.request_id || "无请求 ID"}</span></div> },
-    { title: "调用方", dataIndex: "source", responsive: ["md"], render: (v) => v || "—" },
-    { title: "状态", dataIndex: "status_code", width: 90, render: (v: number) => <Tag color={v >= 500 ? "error" : v >= 400 ? "warning" : "success"}>{v}</Tag> },
-    { title: "耗时", dataIndex: "duration_ms", width: 100, render: (v) => v == null ? "—" : `${v} ms` },
-    { title: "错误码", dataIndex: "error_code", responsive: ["lg"], render: (v) => v || "—" },
+    { title: "时间", dataIndex: "created_at", width: 180, render: (value) => <span className="request-log-time">{formatTime(value)}</span> },
+    { title: "请求", key: "request", width: 295, render: (_, r) => <div className="request-cell"><b><Tag>{r.method || "—"}</Tag>{r.path || "—"}</b><span>{r.request_id || "无请求 ID"}</span></div> },
+    { title: "调用人", key: "caller", width: 255, responsive: ["md"], render: (_, r) => <div className="request-caller"><b>{r.user_email || r.user_username || r.source || "未知调用方"}</b><span>{[r.user_username && r.user_username !== r.user_email ? r.user_username : "", r.source ? `密钥：${r.source}` : "", r.user_id ? `用户 ID ${r.user_id}` : ""].filter(Boolean).join(" · ") || "未关联用户"}</span></div> },
+    { title: "状态", dataIndex: "status_code", width: 78, render: (v: number) => <Tag color={v >= 500 ? "error" : v >= 400 ? "warning" : "success"}>{v}</Tag> },
+    { title: "耗时", dataIndex: "duration_ms", width: 82, render: (v) => v == null ? "—" : `${v} ms` },
+    { title: "错误码", dataIndex: "error_code", width: 125, responsive: ["lg"], render: (v) => v || "—" },
   ];
-  return <><div className="toolbar"><Text type="secondary">最近 100 条请求；敏感凭据和验证码不会写入日志</Text><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>{error ? <ErrorState error={error} retry={load} /> : <Table rowKey={(r) => r.id || r.request_id || r.created_at} loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="暂无请求日志" /> }} scroll={{ x: 820 }} />}</>;
+  return <><div className="toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索接口、用户邮箱、用户名或密钥" style={{ width: 330 }} /><Select allowClear value={statusGroup || undefined} onChange={(value) => setStatusGroup(value || "")} placeholder="全部请求状态" style={{ width: 155 }} options={[{ value: "success", label: "成功（2xx/3xx）" }, { value: "client_error", label: "客户端错误（4xx）" }, { value: "server_error", label: "服务端错误（5xx）" }]} /></div><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>{error ? <ErrorState error={error} retry={load} /> : <Table className="dense-table request-log-table" size="small" rowKey={(r) => r.id || r.request_id || r.created_at} loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="没有符合条件的请求日志" /> }} scroll={{ x: 1015 }} />}</>;
 }
 
 function SettingsPage() {

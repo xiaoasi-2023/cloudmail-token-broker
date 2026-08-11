@@ -130,5 +130,12 @@ export const userApi = {
       transactions: record.transactions || record.items || record.records || [],
     } satisfies CreditSummary;
   },
-  mailboxes: async () => asList<UserMailbox>(unwrap(await request<ApiEnvelope<unknown> | unknown>("/mailboxes?limit=100&offset=0"))),
+  mailboxes: async (keyword = "", purpose = "", status = "", verificationStatus = "") => {
+    const params = new URLSearchParams({ limit: "100", offset: "0" });
+    if (keyword.trim()) params.set("keyword", keyword.trim());
+    if (purpose.trim()) params.set("purpose", purpose.trim());
+    if (status.trim()) params.set("status", status.trim());
+    if (verificationStatus.trim()) params.set("verification_status", verificationStatus.trim());
+    return asList<UserMailbox>(unwrap(await request<ApiEnvelope<unknown> | unknown>(`/mailboxes?${params.toString()}`)));
+  },
 };

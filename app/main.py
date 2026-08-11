@@ -275,6 +275,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     endpoint=request.url.path,
                     method=request.method,
                     source=str(getattr(request.state, "client_name", "")),
+                    user_id=getattr(request.state, "user_id", None),
                     status_code=response.status_code,
                     duration_ms=round((time.perf_counter() - started) * 1000),
                 )

@@ -218,11 +218,41 @@ class GatewayRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_request_logs(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def list_request_logs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        keyword: str = "",
+        status_group: str = "",
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        normalized_keyword = keyword.strip().lower()
+        if normalized_keyword:
+            like_keyword = f"%{normalized_keyword}%"
+            conditions.append(
+                "(LOWER(l.endpoint) LIKE ? OR LOWER(l.source) LIKE ? OR "
+                "LOWER(l.error_code) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(u.email) LIKE ?)"
+            )
+            params.extend([like_keyword, like_keyword, like_keyword, like_keyword, like_keyword])
+        normalized_status = status_group.strip().lower()
+        if normalized_status == "success":
+            conditions.append("l.status_code BETWEEN 200 AND 399")
+        elif normalized_status == "client_error":
+            conditions.append("l.status_code BETWEEN 400 AND 499")
+        elif normalized_status == "server_error":
+            conditions.append("l.status_code >= 500")
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.extend([limit, offset])
         with self.database.read() as connection:
             rows = connection.execute(
-                "SELECT *, endpoint AS path FROM gateway_request_logs ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                f"""SELECT l.*, l.endpoint AS path, u.username AS user_username,
+                u.email AS user_email
+                FROM gateway_request_logs l LEFT JOIN users u ON u.id=l.user_id
+                {where_clause}
+                ORDER BY l.created_at DESC LIMIT ? OFFSET ?""",
+                params,
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -235,17 +265,18 @@ class GatewayRepository:
         source: str,
         status_code: int,
         duration_ms: int,
+        user_id: int | None = None,
         error_code: str = "",
     ) -> None:
         with self.database.transaction() as connection:
             connection.execute(
                 """INSERT INTO gateway_request_logs
-                (request_id, endpoint, method, source, status_code, duration_ms,
+                (request_id, endpoint, method, source, user_id, status_code, duration_ms,
                  error_code, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)""",
                 (
                     request_id[:100], endpoint[:500], method[:20], source[:100],
-                    int(status_code), max(0, int(duration_ms)), error_code[:100], utc_now(),
+                    user_id, int(status_code), max(0, int(duration_ms)), error_code[:100], utc_now(),
                 ),
             )
 

@@ -57,6 +57,31 @@ button, input, textarea { font: inherit; }
 .toolbar-copy > .ant-typography:last-child { font-size: 12px; color: #8b928e; }
 .mailbox-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .mailbox-created-at { display: inline-block; white-space: nowrap; }
+.dense-table .ant-table { font-size: 13px; }
+.dense-table .ant-table-thead > tr > th { padding: 9px 10px !important; font-size: 12px; white-space: nowrap; }
+.dense-table .ant-table-tbody > tr > td { padding: 9px 10px !important; }
+.mailbox-context { min-width: 0; display: flex; align-items: baseline; white-space: nowrap; overflow: hidden; }
+.mailbox-context b, .mailbox-context span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mailbox-context b { flex: 0 1 auto; color: #29312d; }
+.mailbox-context span { flex: 1 1 auto; color: #7d8581; font-size: 12px; }
+.mailbox-context.route b { max-width: 115px; }
+.user-identity-cell { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.user-avatar { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; color: #fff; background: #587f6d; border-radius: 50%; font: 600 13px "IBM Plex Mono", monospace; }
+.user-avatar.admin { background: #d46936; }
+.user-identity-cell > div { min-width: 0; }
+.user-name-line { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.user-name-line b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-pill { flex: 0 0 auto; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+.role-pill.admin { color: #9b401d; background: #fae5d9; }
+.role-pill.user { color: #315746; background: #deebe4; }
+.user-identity-cell small { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: #808884; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-identity-cell small i { color: #bcc0bd; font-style: normal; }
+.request-log-time { display: inline-block; white-space: nowrap; font: 500 12px "IBM Plex Mono", monospace; }
+.request-cell, .request-caller { min-width: 0; }
+.request-cell b { display: flex; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.request-cell .ant-tag { flex: 0 0 auto; margin-right: 7px; }
+.request-cell span, .request-caller span { display: block; margin-top: 3px; color: #89908c; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.request-caller b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-alert { margin-bottom: 18px; }
 .primary-cell { min-width: 145px; }
 .primary-cell b { display: block; color: #252c29; font-weight: 600; }
@@ -266,6 +291,11 @@ button, input, textarea { font: inherit; }
 .auth-connection-info { margin-top: 28px; }
 .user-secret-card .ant-descriptions-item-label { color: #9caea3; }
 .user-secret-card .ant-descriptions-item-content { color: #edf3ee; }
+.auth-code-auto-panel { display: flex; align-items: flex-start; gap: 14px; margin: 22px 0; padding: 20px; border: 1px solid #ddd9c8; background: #f4f2e8; }
+.auth-code-auto-panel > .anticon { width: 42px; height: 42px; flex: 0 0 auto; display: grid; place-items: center; color: #fff; background: #39755f; font-size: 19px; }
+.auth-code-auto-panel b, .auth-code-auto-panel small { display: block; }
+.auth-code-auto-panel small { margin-top: 6px; color: #747c78; line-height: 1.6; }
+.user-auth-action-card .ant-btn-primary { min-width: 190px; height: 44px; }
 .user-credit-hero { min-height: 190px; padding: 34px 38px; display: flex; align-items: center; justify-content: space-between; gap: 28px; margin-bottom: 20px; color: #fff; background: #18221d; border: 1px solid #26372d; }
 .user-credit-hero h2 { color: #f3f3ec; margin: 10px 0 6px; }
 .user-credit-hero p.ant-typography { max-width: 660px; color: #b8c7bd !important; }

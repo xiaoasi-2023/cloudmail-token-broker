@@ -63,6 +63,9 @@ export interface UserMailbox {
   status?: string;
   verification_status?: string;
   verificationStatus?: string;
+  verification_code?: string;
+  verificationCode?: string;
+  domain?: string;
   error_message?: string;
   errorMessage?: string;
   created_at?: string;
