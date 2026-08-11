@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.gateway.database import GatewayDatabase, SCHEMA_VERSION
+from app.gateway.registration import RegistrationEmailSender
 from app.main import create_app
 
 
@@ -127,5 +128,114 @@ def test_schema_upgrade_adds_persisted_verification_code_column(tmp_path: Path) 
         mailbox = connection.execute("SELECT verification_code FROM mailboxes WHERE id='mbx-old'").fetchone()
 
     assert "verification_code" in columns
-    assert version == SCHEMA_VERSION == 3
+    assert version == SCHEMA_VERSION == 5
     assert mailbox["verification_code"] == ""
+
+
+def test_admin_pop_auth_code_is_stored_and_returned_as_plaintext(tmp_path: Path) -> None:
+    app = create_app(gateway_settings(tmp_path))
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/admin-api/auth/login",
+            json={"username": "admin", "password": "correct-password"},
+        )
+        saved = client.put(
+            "/admin-api/pop-auth-code",
+            json={"auth_code": "plain-admin-pop-code"},
+        )
+        loaded = client.get("/admin-api/pop-auth-code")
+        users = client.get("/admin-api/users")
+
+    assert login.status_code == 200
+    assert saved.status_code == 200
+    assert saved.json()["data"]["admin_pop_auth_code"] == "plain-admin-pop-code"
+    assert loaded.status_code == 200
+    assert loaded.json()["data"] == {
+        "configured": True,
+        "admin_pop_auth_code": "plain-admin-pop-code",
+        "legacy_hash_only": False,
+        "updated_at": loaded.json()["data"]["updated_at"],
+    }
+    assert "plain-admin-pop-code" not in users.text
+
+    repository = app.state.user_repository
+    assert repository.verify_admin_pop_auth_code("plain-admin-pop-code") is True
+    assert repository.verify_admin_pop_auth_code("wrong-admin-pop-code") is False
+    with repository.database.read() as connection:
+        stored = connection.execute(
+            """SELECT admin_pop_auth_code, admin_pop_auth_code_hash
+            FROM users WHERE role='admin'"""
+        ).fetchone()
+    assert stored["admin_pop_auth_code"] == "plain-admin-pop-code"
+    assert stored["admin_pop_auth_code_hash"] is None
+
+
+def test_user_can_register_with_email_code_and_login_by_email(tmp_path: Path, monkeypatch) -> None:
+    sent: dict[str, object] = {}
+
+    def fake_send_code(_sender, email: str, code: str, ttl_seconds: int) -> None:
+        sent.update(email=email, code=code, ttl_seconds=ttl_seconds)
+
+    monkeypatch.setattr(RegistrationEmailSender, "send_code", fake_send_code)
+    settings = replace(
+        gateway_settings(tmp_path),
+        user_registration_enabled=True,
+        smtp_host="smtp.example.com",
+        smtp_username="notice@example.com",
+        smtp_password="smtp-authorization-code",
+        smtp_from="notice@example.com",
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        config = client.get("/user-api/auth/registration-config")
+        sent_response = client.post(
+            "/user-api/auth/register-code",
+            json={"email": "new-user@example.com"},
+        )
+        invalid = client.post(
+            "/user-api/auth/register",
+            json={
+                "username": "new-user",
+                "email": "new-user@example.com",
+                "password": "register-password",
+                "code": "000000",
+            },
+        )
+        registered = client.post(
+            "/user-api/auth/register",
+            json={
+                "username": "new-user",
+                "email": "new-user@example.com",
+                "password": "register-password",
+                "code": sent["code"],
+            },
+        )
+        login = client.post(
+            "/user-api/auth/login",
+            json={"username": "new-user@example.com", "password": "register-password"},
+        )
+        profile = client.get("/user-api/me")
+
+    assert config.json()["data"]["enabled"] is True
+    assert sent_response.status_code == 200
+    assert sent["email"] == "new-user@example.com"
+    assert len(str(sent["code"])) == 6
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"]["code"] == "REGISTER_CODE_INVALID"
+    assert registered.status_code == 201
+    assert registered.json()["data"]["email"] == "new-user@example.com"
+    assert login.status_code == 200
+    assert profile.status_code == 200
+    assert profile.json()["data"]["username"] == "new-user"
+
+    database = GatewayDatabase(settings.database_url)
+    with database.read() as connection:
+        stored = connection.execute(
+            "SELECT code_hash, consumed FROM user_registration_codes WHERE email=?",
+            ("new-user@example.com",),
+        ).fetchone()
+    database.dispose()
+    assert stored["consumed"] == 1
+    assert str(sent["code"]) not in stored["code_hash"]

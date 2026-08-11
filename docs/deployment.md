@@ -39,7 +39,17 @@ ADMIN_PASSWORD_HASH=<推荐：pbkdf2_sha256 格式的管理员密码哈希>
 ADMIN_SESSION_TTL_SECONDS=28800
 ADMIN_COOKIE_SECURE=true
 ADMIN_LOGIN_RATE_LIMIT_PER_MINUTE=10
-USER_REGISTRATION_ENABLED=false
+USER_REGISTRATION_ENABLED=true
+USER_REGISTRATION_CODE_TTL_SECONDS=600
+USER_REGISTRATION_CODE_COOLDOWN_SECONDS=60
+USER_REGISTRATION_RATE_LIMIT_PER_MINUTE=10
+
+SMTP_HOST=smtp.163.com
+SMTP_PORT=465
+SMTP_USERNAME=<发件邮箱>
+SMTP_PASSWORD=<SMTP 授权码，不是邮箱登录密码>
+SMTP_FROM=<发件邮箱>
+SMTP_TLS=true
 
 MAILBOX_CREATE_RATE_LIMIT_PER_MINUTE=120
 MAILBOX_POLL_RATE_LIMIT_PER_MINUTE=600
@@ -53,6 +63,8 @@ POP3_MAX_MESSAGES=20
 ```
 
 `DATA_ENCRYPTION_KEY` 和 `MAILBOX_SESSION_SECRET` 必须不同，生产环境不能随意修改。`ADMIN_PASSWORD_HASH` 与 `ADMIN_PASSWORD` 二选一，不能同时配置，生产优先使用哈希。普通 POP3 `110` 首期不启用 TLS，`995` 不开放；如果未来启用 `STLS`，再挂载证书和私钥。
+
+开启 `USER_REGISTRATION_ENABLED=true` 时，SMTP 六项配置必须完整。`SMTP_TLS=true` 在 `465` 端口使用 SSL 连接；`SMTP_PASSWORD` 填邮箱服务商生成的 SMTP 授权码，不能提交到 Git。若不开放注册，将开关改为 `false`，用户仍可由唯一管理员创建。
 
 `POP3_PORT=8110` 只控制容器内监听端口；对外 `110` 由 Compose 的 `110:8110` 映射提供。当前代码没有 `POP3_PUBLIC_PORT`、`POP3_STLS_ENABLED` 或证书路径环境变量，不能通过环境变量打开 `995` 或 STLS。
 
@@ -107,7 +119,7 @@ POP3 是原始 TCP 协议，不能通过普通 HTTP 反向代理转发。若使�
 1. 使用 `.env` 中的管理员账号登录 `/admin/`。
 2. 新增 CloudMail 实例并填写管理员邮箱、密码、API 地址和 TLS 设置。
 3. 为实例添加邮箱域名并测试连接。
-4. 设置管理员全局 POP 授权码，完整值只展示一次。
+4. 设置管理员全局 POP 授权码；当前版本按明文存入数据库，可在管理端随时查看和复制。
 5. 创建普通用户并配置初始积分。
 6. 普通用户登录 `/user/`，设置自己的 `userAuthCode` 并创建 `X-API-Key`。
 7. 使用用户密钥调用 `/v1/mailboxes` 验证邮箱创建和积分扣费。
@@ -158,7 +170,7 @@ curl -sS -X POST 'https://cloudmail.xiaoasi.xyz/v1/mailboxes' \
 3. 运行迁移脚本 dry-run；
 4. 确认删除范围后使用 `--apply`；
 5. 重建新用户、唯一管理员、用户密钥、用户会话、积分规则、积分流水和审计表；
-6. 设置管理员全局 POP 授权码；
+6. 设置管理员全局 POP 授权码，并确认管理端可以回显和复制当前明文值；
 7. 重新创建普通用户调用密钥和用户授权码；
 8. 分别验收普通用户和管理员 POP3 访问。
 

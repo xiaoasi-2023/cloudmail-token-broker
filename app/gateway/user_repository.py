@@ -34,9 +34,12 @@ def _public_user(row: Any) -> dict[str, Any]:
     item.pop("password_hash", None)
     item.pop("user_auth_code_hash", None)
     item.pop("admin_pop_auth_code_hash", None)
+    item.pop("admin_pop_auth_code", None)
     item["pop_enabled"] = bool(item["pop_enabled"])
     item["has_user_auth_code"] = bool(row["user_auth_code_hash"])
-    item["has_admin_pop_auth_code"] = bool(row["admin_pop_auth_code_hash"])
+    item["has_admin_pop_auth_code"] = bool(
+        row["admin_pop_auth_code"] or row["admin_pop_auth_code_hash"]
+    )
     return item
 
 
@@ -92,7 +95,15 @@ class UserRepository:
     def get_user_by_username(self, username: str) -> dict[str, Any] | None:
         with self.database.read() as connection:
             row = connection.execute(
-                "SELECT * FROM users WHERE username=?", (username.strip().lower(),)
+                "SELECT * FROM users WHERE username=? OR email=?",
+                (username.strip().lower(), username.strip().lower()),
+            ).fetchone()
+        return _public_user(row) if row else None
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute(
+                "SELECT * FROM users WHERE email=?", (email.strip().lower(),)
             ).fetchone()
         return _public_user(row) if row else None
 
@@ -103,8 +114,39 @@ class UserRepository:
     def _get_user_with_secret_by_username(self, username: str) -> Any | None:
         with self.database.read() as connection:
             return connection.execute(
-                "SELECT * FROM users WHERE username=?", (username.strip().lower(),)
+                "SELECT * FROM users WHERE username=? OR email=?",
+                (username.strip().lower(), username.strip().lower()),
             ).fetchone()
+
+    @staticmethod
+    def _insert_user(
+        connection: Any,
+        *,
+        username: str,
+        email: str | None,
+        password_hash: str,
+        initial_points: int | None,
+        current: str,
+    ) -> Any:
+        rule = connection.execute(
+            "SELECT initial_user_points FROM credit_rules WHERE operation='create_mailbox'"
+        ).fetchone()
+        points = int(initial_points if initial_points is not None else rule["initial_user_points"])
+        inserted = connection.execute(
+            """INSERT INTO users
+            (username, email, password_hash, role, status, pop_enabled, credit_balance, created_at, updated_at)
+            VALUES (?, ?, ?, 'user', 'active', 1, ?, ?, ?) RETURNING id""",
+            (username, email, password_hash, points, current, current),
+        )
+        user_id = int(inserted.fetchone()["id"])
+        if points:
+            connection.execute(
+                """INSERT INTO credit_transactions
+                (user_id, type, status, amount, balance_after, reference_type, reference_id, remark, created_at)
+                VALUES (?, 'admin_adjust', 'completed', ?, ?, 'admin', ?, '新用户初始积分', ?)""",
+                (user_id, points, points, str(user_id), current),
+            )
+        return connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
     def create_user(
         self,
@@ -120,25 +162,75 @@ class UserRepository:
         current = utc_now()
 
         with self.database.transaction() as connection:
-            rule = connection.execute(
-                "SELECT initial_user_points FROM credit_rules WHERE operation='create_mailbox'"
-            ).fetchone()
-            points = int(initial_points if initial_points is not None else rule["initial_user_points"])
-            inserted = connection.execute(
-                """INSERT INTO users
-                (username, email, password_hash, role, status, pop_enabled, credit_balance, created_at, updated_at)
-                VALUES (?, ?, ?, 'user', 'active', 1, ?, ?, ?) RETURNING id""",
-                (normalized_username, normalized_email, password_hash, points, current, current),
+            row = self._insert_user(
+                connection,
+                username=normalized_username,
+                email=normalized_email,
+                password_hash=password_hash,
+                initial_points=initial_points,
+                current=current,
             )
-            user_id = int(inserted.fetchone()["id"])
-            if points:
+        return _public_user(row)
+
+    def create_user_from_registration(
+        self,
+        *,
+        username: str,
+        email: str,
+        password: str,
+        code_hash: str,
+        max_attempts: int = 5,
+    ) -> dict[str, Any] | None:
+        normalized_username = username.strip().lower()
+        normalized_email = email.strip().lower()
+        password_hash = hash_admin_password(password)
+        current = utc_now()
+        now = datetime.now(UTC)
+
+        with self.database.transaction() as connection:
+            code_row = connection.execute(
+                """SELECT * FROM user_registration_codes
+                WHERE email=? AND consumed=0 ORDER BY created_at DESC LIMIT 1""",
+                (normalized_email,),
+            ).fetchone()
+            if code_row is None:
+                self.error_code = "REGISTER_CODE_INVALID"
+                self.error = "验证码错误或已过期"
+                return None
+
+            expires_at = datetime.fromisoformat(str(code_row["expires_at"]))
+            attempts = int(code_row["attempts"] or 0)
+            if expires_at <= now or attempts >= max_attempts:
                 connection.execute(
-                    """INSERT INTO credit_transactions
-                    (user_id, type, status, amount, balance_after, reference_type, reference_id, remark, created_at)
-                    VALUES (?, 'admin_adjust', 'completed', ?, ?, 'admin', ?, '新用户初始积分', ?)""",
-                    (user_id, points, points, str(user_id), current),
+                    "UPDATE user_registration_codes SET consumed=1 WHERE id=?",
+                    (code_row["id"],),
                 )
-            row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+                self.error_code = "REGISTER_CODE_INVALID"
+                self.error = "验证码错误或已过期"
+                return None
+
+            if not hmac.compare_digest(str(code_row["code_hash"]), code_hash):
+                next_attempts = attempts + 1
+                connection.execute(
+                    """UPDATE user_registration_codes SET attempts=?, consumed=? WHERE id=?""",
+                    (next_attempts, 1 if next_attempts >= max_attempts else 0, code_row["id"]),
+                )
+                self.error_code = "REGISTER_CODE_INVALID"
+                self.error = "验证码错误或已过期"
+                return None
+
+            row = self._insert_user(
+                connection,
+                username=normalized_username,
+                email=normalized_email,
+                password_hash=password_hash,
+                initial_points=None,
+                current=current,
+            )
+            connection.execute(
+                "UPDATE user_registration_codes SET consumed=1 WHERE id=?",
+                (code_row["id"],),
+            )
         return _public_user(row)
 
     def verify_login(self, username: str, password: str) -> dict[str, Any] | None:
@@ -225,10 +317,9 @@ class UserRepository:
         return _public_user(row)
 
     def set_admin_pop_auth_code(self, auth_code: str) -> dict[str, Any] | None:
-        try:
-            auth_code_hash = hash_admin_password(auth_code)
-        except ValueError as exc:
-            self.error = str(exc)
+        normalized_auth_code = str(auth_code or "").strip()
+        if len(normalized_auth_code) < 10:
+            self.error = "授权码长度不能少于 10 个字符"
             return None
         with self.database.transaction() as connection:
             row = connection.execute("SELECT * FROM users WHERE role='admin' LIMIT 1").fetchone()
@@ -236,12 +327,34 @@ class UserRepository:
                 self.error = "管理员账号不存在"
                 return None
             connection.execute(
-                """UPDATE users SET admin_pop_auth_code_hash=?, admin_pop_auth_code_updated_at=?,
+                """UPDATE users SET admin_pop_auth_code=?, admin_pop_auth_code_hash=NULL,
+                admin_pop_auth_code_updated_at=?,
                 updated_at=? WHERE id=?""",
-                (auth_code_hash, utc_now(), utc_now(), row["id"]),
+                (normalized_auth_code, utc_now(), utc_now(), row["id"]),
             )
             row = connection.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
         return _public_user(row)
+
+    def get_admin_pop_auth_code(self) -> dict[str, Any]:
+        with self.database.read() as connection:
+            row = connection.execute(
+                """SELECT admin_pop_auth_code, admin_pop_auth_code_hash,
+                admin_pop_auth_code_updated_at FROM users WHERE role='admin' LIMIT 1"""
+            ).fetchone()
+        if row is None:
+            return {
+                "configured": False,
+                "admin_pop_auth_code": "",
+                "legacy_hash_only": False,
+                "updated_at": None,
+            }
+        plaintext = str(row["admin_pop_auth_code"] or "")
+        return {
+            "configured": bool(plaintext or row["admin_pop_auth_code_hash"]),
+            "admin_pop_auth_code": plaintext,
+            "legacy_hash_only": bool(not plaintext and row["admin_pop_auth_code_hash"]),
+            "updated_at": row["admin_pop_auth_code_updated_at"],
+        }
 
     def verify_user_pop_auth_code(self, user_id: int, auth_code: str) -> bool:
         now = datetime.now(UTC)
@@ -272,9 +385,18 @@ class UserRepository:
     def verify_admin_pop_auth_code(self, auth_code: str) -> bool:
         with self.database.read() as connection:
             row = connection.execute(
-                "SELECT admin_pop_auth_code_hash FROM users WHERE role='admin' LIMIT 1"
+                """SELECT admin_pop_auth_code, admin_pop_auth_code_hash
+                FROM users WHERE role='admin' LIMIT 1"""
             ).fetchone()
-        return bool(row and row["admin_pop_auth_code_hash"] and verify_admin_password(auth_code, row["admin_pop_auth_code_hash"]))
+        if row is None:
+            return False
+        plaintext = str(row["admin_pop_auth_code"] or "")
+        if plaintext:
+            return hmac.compare_digest(str(auth_code or ""), plaintext)
+        return bool(
+            row["admin_pop_auth_code_hash"]
+            and verify_admin_password(auth_code, row["admin_pop_auth_code_hash"])
+        )
 
     def create_api_key(self, user_id: int, name: str) -> dict[str, Any]:
         api_key = "xmk_" + secrets.token_urlsafe(32)

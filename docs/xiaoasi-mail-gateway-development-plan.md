@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- 状态：核心网关、用户中心、用户级调用密钥、用户级 POP 授权码、管理员全局 POP 授权码、积分扣费、管理端权限入口和最小只读 POP3 `110` 已完成本地实现、全量自测与文档核对；真实 CloudMail 环境验收、生产部署点验及调用方迁移仍待完成
+- 状态：核心网关、用户中心、邮箱验证码注册、用户级调用密钥、用户级 POP 授权码、管理员全局 POP 授权码、积分扣费、管理端权限入口和最小只读 POP3 `110` 已完成本地实现与自测；真实 SMTP/CloudMail 环境验收、生产部署点验及调用方迁移仍待完成
 - 制定日期：2026-08-10
 - 当前仓库：`cloudmail-token-broker`
 - 当前镜像：`registry.cn-hangzhou.aliyuncs.com/jiangshitong/cloudmail-token-broker`
@@ -19,9 +19,10 @@
 | 管理员全量邮箱访问、积分规则和审计 | 已完成（本地验收） | 管理员全局 POP 授权可通过 POP3 `110` 读取全部可查询邮箱；用户停用/授权码清除、积分调整/规则配置和管理 API 审计已接入；当前 HTTP 管理 API 只提供邮箱记录和请求日志查询，不宣称存在邮件内容、刷新、释放或邮箱 POP 开关子接口 |
 | 旧全局 `client-keys` 清理 | 已完成（本地验收） | 已删除历史 `/admin-api/client-keys`、`gateway_client_keys` 表初始化及索引、`GatewayRepository` 旧方法和仅服务于旧接口的管理员测试；当前仅保留用户级 `user_api_keys` |
 | 用户中心页面与前端构建兼容 | 已完成（本地验收） | 用户中心已接入用户密钥、POP 授权码、积分和邮箱记录；Vite 已降级到 4.5.5，兼容当前 Node 16.19.1 |
-| 管理端页面与权限入口 | 已完成（本地验收） | 管理端已增加用户管理、积分/POP 设置，保留实例、域名、邮箱记录和请求日志页面；用户级调用密钥仅在用户中心管理 |
+| 邮箱验证码自助注册 | 已完成（本地验收） | 参考 `chatgpt2img` 注册闭环实现 SMTP 发码、6 位验证码哈希存储、有效期、同邮箱发送冷却、输错失效、来源限流和用户端注册表单；注册只能创建普通用户，支持账号或邮箱登录；真实 SMTP 发信仍需生产点验 |
+| 管理端页面与权限入口 | 已完成（本地验收） | 管理端已增加用户管理、积分/POP 设置，保留实例、域名、邮箱记录和请求日志页面；管理员全局 POP 授权码按明文保存，支持手动输入、明文显隐、留空自动生成，并可随时查看、复制和修改当前值；用户级调用密钥仅在用户中心管理 |
 | 容器 `110:8110` 映射和镜像端口声明 | 已完成（本地验收） | `docker-compose.yml`、`Dockerfile`、POP3 lifespan 和健康检查已接通；`/healthz` 暴露 `pop3Listening`，Compose 同时检查 HTTP 与容器内 `8110`；生产仍需按部署文档放行 `110/tcp` 并验证监听 |
-| 文档状态与验收记录 | 已完成（文档与自测） | 四份对外/规划文档已与当前路由、静态入口、Docker 映射和 POP3 `110` 运行方式对齐；后端全量测试 `50 passed`、直连 API 流程、前端构建和部署配置检查均通过；真实 CloudMail 验收仍单独保留 |
+| 文档状态与验收记录 | 已完成（文档与自测） | 四份对外/规划文档已与当前路由、静态入口、Docker 映射、邮箱验证码注册和 POP3 `110` 运行方式对齐；后端全量测试、注册 API 闭环和前端构建均通过；真实 SMTP 发信、CloudMail 验收及生产部署点验仍单独保留 |
 
 本方案建设一个独立的完整邮箱网关。图片站、Kirox、Windows EXE 及其他调用方只对接 Xiaoasi Mail Gateway，不了解 CloudMail 的管理员凭据、Token、接口路径和响应结构。
 
@@ -53,7 +54,7 @@
 20. 网关收到 `USER`、`PASS` 后，根据邮箱归属用户校验该用户的 POP 授权码，再调用 CloudMail HTTP `emailList`，不暴露 CloudMail Token、管理员凭据或 Provider 内部密码。
 21. 用户注册能力预留但默认关闭；未来开放注册时沿用同一用户、密钥、积分和权限模型。
 22. 唯一管理员拥有独立的管理员 POP 授权码；管理员使用该授权码和任意邮箱地址登录 POP3 后，可以读取全部未物理删除且上游仍存在的邮箱，不受普通用户归属、用户 POP 开关、邮箱过期状态限制。
-23. 管理员 POP 授权码与管理员登录密码、普通用户 `userAuthCode` 完全分离，只保存哈希，管理员设置或重置自己的授权码后完整值只展示一次；管理员强制重置普通用户授权码时只使旧值失效，不返回新授权码明文，由普通用户自行重新设置。
+23. 管理员 POP 授权码与管理员登录密码、普通用户 `userAuthCode` 完全分离；管理员 POP 授权码按明文保存并允许管理员随时查看，普通用户 `userAuthCode` 仍只保存哈希。管理员强制重置普通用户授权码时只使旧值失效，不返回新授权码明文，由普通用户自行重新设置。
 
 ## 3. 建设目标
 
@@ -256,7 +257,8 @@ POP 授权码不再按邮箱保存，而是校验邮箱所属用户的 `user_aut
 | `status` | VARCHAR | `active`、`disabled` |
 | `user_auth_code_hash` | TEXT | 用户级 POP 授权码哈希，不保存明文 |
 | `user_auth_code_updated_at` | DATETIME | 最近一次设置或重置授权码时间 |
-| `admin_pop_auth_code_hash` | TEXT | 仅唯一 `admin` 用户使用的全局 POP 授权码哈希；普通用户必须为空 |
+| `admin_pop_auth_code` | TEXT | 仅唯一 `admin` 用户使用的全局 POP 授权码明文；普通用户必须为空 |
+| `admin_pop_auth_code_hash` | TEXT | 旧版兼容字段；管理员重新保存明文后清空 |
 | `admin_pop_auth_code_updated_at` | DATETIME | 管理员全局 POP 授权码最近更新时间 |
 | `pop_enabled` | BOOLEAN | 用户是否允许通过 POP3 读取自己的邮箱 |
 | `pop_failed_attempts` | INTEGER | 用户级连续 POP 登录失败次数 |
@@ -266,7 +268,7 @@ POP 授权码不再按邮箱保存，而是校验邮箱所属用户的 `user_aut
 | `created_at` | DATETIME | 用户创建时间 |
 | `updated_at` | DATETIME | 用户更新时间 |
 
-用户登录密码、普通用户 POP 授权码和管理员全局 POP 授权码是三套独立凭证。唯一管理员可以启用或停用普通用户的 POP 能力，也可以强制清除普通用户授权码，使其旧授权码立即失效；管理员不能查看普通用户授权码明文，普通用户必须在用户中心重新设置新授权码。管理员可以设置或重置自己的全局 POP 授权码，成功后完整值只展示一次，后续仅显示已配置状态和掩码。普通用户不能把自己的角色修改为 `admin`，普通用户记录的 `admin_pop_auth_code_hash` 必须为空。
+用户登录密码、普通用户 POP 授权码和管理员全局 POP 授权码是三套独立凭证。唯一管理员可以启用或停用普通用户的 POP 能力，也可以强制清除普通用户授权码，使其旧授权码立即失效；管理员不能查看普通用户授权码明文，普通用户必须在用户中心重新设置新授权码。管理员自己的全局 POP 授权码按明文保存，可在管理端随时查看、复制和修改。普通用户不能把自己的角色修改为 `admin`，普通用户记录的 `admin_pop_auth_code` 必须为空。
 
 ### 6.5 用户调用密钥表 `user_api_keys`
 
@@ -544,6 +546,9 @@ image2api4821@mail-a.example.com
 
 ```http
 POST /user-api/auth/login
+GET  /user-api/auth/registration-config
+POST /user-api/auth/register-code
+POST /user-api/auth/register
 POST /user-api/auth/logout
 PUT  /user-api/auth/password
 POST /user-api/auth/sessions/revoke-all
@@ -556,7 +561,7 @@ GET  /user-api/credits
 GET  /user-api/mailboxes
 ```
 
-用户注册接口预留为 `POST /user-api/auth/register`，仅在 `USER_REGISTRATION_ENABLED=true` 时开放；关闭时必须返回统一的 `USER_REGISTRATION_DISABLED`，且任何注册请求都只能创建普通用户。
+用户邮箱验证码注册已通过 `POST /user-api/auth/register-code` 和 `POST /user-api/auth/register` 落地，仅在 `USER_REGISTRATION_ENABLED=true` 且 SMTP 配置完整时开放；关闭时返回统一的 `USER_REGISTRATION_DISABLED`。验证码明文只进入邮件，不写入数据库或日志；数据库保存基于服务端密钥的 HMAC 哈希，默认 10 分钟有效、同邮箱 60 秒发送冷却、连续输错 5 次失效。任何注册请求都只能创建普通用户，并按积分规则初始化余额。
 
 用户登录后只能：
 
@@ -679,12 +684,12 @@ POP3 客户端连接 110
 
 管理员全局 POP 访问规则：
 
-- 唯一管理员在管理端设置 `admin_pop_auth_code`，完整值只在成功设置后展示一次；
+- 唯一管理员在管理端设置 `admin_pop_auth_code`，数据库直接保存明文，管理端可随时读取、显示和复制；
 - POP 客户端使用任意未物理删除的邮箱地址作为 `USER`，使用管理员 POP 授权码作为 `PASS`；
 - 管理员授权码可以读取全部未物理删除且 CloudMail 上游仍存在的邮箱，包括普通用户已停用、用户 POP 已关闭、邮箱已过期或已释放的邮箱；
 - 管理员授权码不受 `owner_user_id`、用户 `pop_enabled`、邮箱 `pop_enabled` 和邮箱会话过期时间限制，但邮箱记录被物理清理或上游账号已不存在时仍不能读取；
 - 管理员 POP 登录、`STAT`、`LIST`、`UIDL`、`RETR` 都必须写入审计日志；日志只记录管理员用户、邮箱 ID、命令类型、耗时和结果，不记录授权码或完整邮件正文；
-- 普通用户授权码和管理员授权码必须使用不同的哈希字段，管理员不能使用登录密码代替 POP 授权码。
+- 普通用户授权码使用哈希字段，管理员授权码使用独立明文字段，两者不能混用；管理员不能使用登录密码代替 POP 授权码。
 
 ### 9.4 查询验证码
 
@@ -789,7 +794,7 @@ MAILBOX_SESSION_TTL_SECONDS=1800
 
 - 用户登录密码、用户级 POP 授权码、调用密钥和 `mailboxToken` 不能互相替代；
 - 用户级 POP 授权码由用户设置或由网关生成后一次性展示；
-- 管理员全局 POP 授权码由管理员设置或重置后一次性展示；
+- 管理员全局 POP 授权码由管理员设置或修改，并允许管理员随时查询当前明文；
 - 日志、请求记录、异常消息和管理端列表不得展示任何完整授权码或调用密钥；
 - 认证失败使用统一错误，不区分邮箱不存在、用户授权码错误或邮箱已释放；
 - 按用户、邮箱和来源 IP 限制 POP 登录失败次数；
@@ -917,7 +922,7 @@ GET   /admin-api/request-logs
 
 其中 `POST /admin-api/users/{userId}/reset-auth-code` 只清除旧授权码并使其立即失效，不返回新授权码明文；普通用户必须在用户中心重新设置授权码。
 
-唯一管理员可以创建、停用和强制清除普通用户授权码，但不能创建第二个管理员，也不能查看用户登录密码、普通用户 POP 授权码或调用密钥明文；管理员自己的全局 POP 授权码也只能设置、重置，不能读取历史明文。积分调整必须记录调整前余额、调整后余额、变更数量和原因。管理员可以通过 HTTP 管理 API 查看全部邮箱记录、状态和脱敏错误，并通过全局 POP 授权码读取邮件内容。当前不提供管理员 HTTP 邮件内容、释放、禁用或重新查询子接口。
+唯一管理员可以创建、停用和强制清除普通用户授权码，但不能创建第二个管理员，也不能查看用户登录密码、普通用户 POP 授权码或调用密钥明文；管理员自己的全局 POP 授权码可以手动输入并切换明文显隐，也可以将两个输入框留空后由前端安全随机生成，或先点击自动生成按钮预览再保存。授权码直接以明文保存，之后可以在管理端随时查看、复制和修改。积分调整必须记录调整前余额、调整后余额、变更数量和原因。管理员可以通过 HTTP 管理 API 查看全部邮箱记录、状态和脱敏错误，并通过全局 POP 授权码读取邮件内容。当前不提供管理员 HTTP 邮件内容、释放、禁用或重新查询子接口。
 
 ### 12.3 运行概览
 
@@ -1065,7 +1070,16 @@ ADMIN_USERNAME=admin
 ADMIN_PASSWORD_HASH=<安全密码哈希>
 DATA_ENCRYPTION_KEY=<数据库敏感字段加密密钥>
 MAILBOX_SESSION_SECRET=<邮箱会话签名密钥>
-USER_REGISTRATION_ENABLED=false
+USER_REGISTRATION_ENABLED=true
+USER_REGISTRATION_CODE_TTL_SECONDS=600
+USER_REGISTRATION_CODE_COOLDOWN_SECONDS=60
+USER_REGISTRATION_RATE_LIMIT_PER_MINUTE=10
+SMTP_HOST=smtp.163.com
+SMTP_PORT=465
+SMTP_USERNAME=<发件邮箱>
+SMTP_PASSWORD=<SMTP 授权码>
+SMTP_FROM=<发件邮箱>
+SMTP_TLS=true
 POP3_PORT=8110
 POP3_MAX_CONNECTIONS=100
 POP3_MAX_AUTH_FAILURES=3
@@ -1079,7 +1093,7 @@ POP3_MAX_MESSAGES=20
 - 用户登录密码只保存哈希；
 - 用户级 POP 授权码只保存哈希，管理员不能查看明文；
 - 用户调用密钥只保存哈希，完整值只返回一次；
-- 管理员全局 POP 授权码只保存哈希，完整值只返回一次；
+- 管理员全局 POP 授权码按产品要求直接保存明文，并只通过管理员鉴权接口回显；
 - CloudMail 管理员密码使用 `DATA_ENCRYPTION_KEY` 加密入库；
 - 管理端和用户中心 Session 使用 HttpOnly、Secure、SameSite Cookie；
 - 管理 API 必须验证登录态和 `admin` 角色；
@@ -1088,9 +1102,9 @@ POP3_MAX_MESSAGES=20
 - 可在宝塔或反向代理层额外限制管理端访问来源；
 - 所有管理修改写入审计日志。
 
-管理员全局 POP 授权码不使用环境变量明文注入，写入唯一 `admin` 用户记录的 `admin_pop_auth_code_hash`；只有管理端登录后可以设置或重置，POP 服务运行时按哈希校验。
+管理员全局 POP 授权码不使用环境变量注入，直接写入唯一 `admin` 用户记录的 `admin_pop_auth_code`；只有管理端登录后可以查询、设置或修改，POP 服务运行时使用恒定时间比较校验。旧版 `admin_pop_auth_code_hash` 仅用于管理员尚未重新保存时的过渡兼容。
 
-用户注册默认关闭。未来开启时，`POST /user-api/auth/register` 只能创建 `role=user`、`status=active` 或待审核状态的普通用户，并按 `credit_rules.initial_user_points` 初始化积分；注册接口不能创建或申请 `admin` 角色。注册防刷、邮箱验证和人工审核可后续增加，不改变用户资源归属模型。
+用户注册由环境变量控制。开启后，用户先通过 SMTP 获取邮箱验证码，再提交账号、邮箱、密码和验证码；注册只能创建 `role=user`、`status=active` 的普通用户，并按 `credit_rules.initial_user_points` 初始化积分，不能创建或申请 `admin` 角色。当前已实现邮箱发送冷却、来源分钟限流、验证码有效期和输错失效；Turnstile、人机验证和人工审核可后续增加，不改变用户资源归属模型。
 
 ## 14. 数据库和部署
 
@@ -1347,7 +1361,7 @@ POP3 连接可额外记录：
 ### 阶段三：管理端和用户中心
 
 - 实现管理员登录；
-- 实现管理员全局 POP 授权码设置、重置和哈希校验；
+- 实现管理员全局 POP 授权码明文查询、设置、修改和 POP 校验；
 - 实现用户登录和用户中心；
 - 实现用户调用密钥管理；
 - 实现用户级 POP 授权码管理；
@@ -1464,7 +1478,7 @@ POP3 连接可额外记录：
 - 用户可以登录、退出和修改自己的登录密码；
 - 用户可以创建、查看掩码和撤销自己的调用密钥；
 - 用户可以设置或重置自己的用户级 POP 授权码；
-- 管理员可以设置或重置全局 POP 授权码，不能查看历史明文；
+- 管理员可以查看、复制、设置或修改全局 POP 授权码明文；
 - 用户可以查看积分余额和积分变更摘要；
 - 用户可以查看自己的邮箱记录，但不能查看其他用户邮箱；
 - 用户不能进入管理员页面、读取 CloudMail 配置、修改积分规则或调整积分；
@@ -1489,7 +1503,7 @@ POP3 连接可额外记录：
 15. 用户可以登录用户中心，并且只能访问自己的调用密钥、授权码、积分和邮箱记录。
 16. 用户可以创建和撤销自己的 `X-API-Key`，调用密钥不能访问其他用户资源。
 17. 用户可以设置或重置用户级 POP 授权码，旧授权码立即失效。
-18. 唯一管理员可以设置或重置全局 POP 授权码，旧授权码立即失效且历史明文不可恢复。
+18. 唯一管理员可以查看、复制、设置或修改全局 POP 授权码；保存新值后旧授权码立即失效。
 19. 管理端可以配置创建邮箱扣除积分和新用户默认积分。
 20. 创建邮箱会正确扣费，余额不足不会调用 CloudMail，CloudMail 创建失败会退款。
 21. 上游超时会保留积分扣款 `pending`，重试和人工确认不会重复建箱或重复扣费。

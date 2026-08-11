@@ -118,10 +118,23 @@ button, input, textarea { font: inherit; }
 .admin-pop-card .ant-form-item-label > label { color: #d6e1d9; }
 .admin-pop-card .ant-input-affix-wrapper, .admin-pop-card .ant-input { background: #22352b; border-color: #3c5748; color: #f3f3ec; }
 .admin-pop-card .ant-input::placeholder, .admin-pop-card .ant-input-affix-wrapper input::placeholder { color: #91a298; }
+.admin-pop-card .ant-input-password-icon { color: #b8c7bd; }
+.admin-pop-card .ant-input-password-icon:hover { color: #f3f3ec; }
 .admin-pop-status { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 24px; padding: 15px; border: 1px solid #3c5748; background: #22352b; }
 .admin-pop-status.not-ready { border-color: #6d5a39; background: #3b3324; }
 .admin-pop-status b, .admin-pop-status small { display: block; }
 .admin-pop-status small { margin-top: 5px; color: #b8c7bd; line-height: 1.6; }
+.admin-pop-legacy-alert { margin-bottom: 18px; }
+.admin-pop-current { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(180px, 1.3fr) auto; align-items: center; gap: 14px; margin-bottom: 18px; padding: 14px; border: 1px solid #587263; background: rgba(154, 194, 168, .1); }
+.admin-pop-current > div span, .admin-pop-current small { display: block; }
+.admin-pop-current small { margin-top: 4px; color: #91a298; font-size: 11px; }
+.admin-pop-current .ant-typography { color: #eef5f0; overflow-wrap: anywhere; }
+.admin-pop-current .ant-btn-link { padding: 0; color: #a7d3b7; }
+.admin-pop-helper { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; padding: 12px 14px; border-left: 3px solid #9ac2a8; background: rgba(154, 194, 168, .08); }
+.admin-pop-helper .ant-typography { color: #c9d7ce; font-size: 12px; line-height: 1.6; }
+.admin-pop-helper .ant-btn-link { flex: 0 0 auto; height: auto; padding: 0; color: #a7d3b7; }
+.admin-pop-actions .ant-btn-default { color: #e6eee9; border-color: #587263; background: transparent; }
+.admin-pop-actions .ant-btn-default:hover { color: #fff !important; border-color: #9ac2a8 !important; background: rgba(154, 194, 168, .1) !important; }
 .role-tag { margin-left: 8px; vertical-align: 1px; }
 
 @media (max-width: 900px) {
@@ -182,6 +195,9 @@ button, input, textarea { font: inherit; }
 .user-login-form-wrap h2 { margin: 12px 0 4px; letter-spacing: -.03em; }
 .user-login-form-wrap form { margin-top: 34px; }
 .user-login-form-wrap .ant-btn-primary { height: 48px; margin-top: 8px; box-shadow: 4px 4px 0 #733b25; }
+.user-login-form-wrap .register-code-button { min-width: 128px; height: 40px; }
+.user-login-form-wrap .auth-mode-switch { margin-top: 18px; color: #315746; }
+.user-login-form-wrap .auth-mode-switch:hover { color: #1f3e31 !important; }
 .user-console-layout { background: #ecece5; }
 .user-console-brand .brand-mark { background: #769b88; box-shadow: 6px 6px 0 #304e40; }
 .user-sider .ant-menu-item-selected { box-shadow: inset 3px 0 #769b88; }
@@ -241,6 +257,8 @@ button, input, textarea { font: inherit; }
   .user-login-aside { min-height: 42vh; padding: 42px 28px; }
   .user-login-intro h1.ant-typography { font-size: 44px; }
   .user-login-panel { padding: 44px 24px; }
+  .admin-pop-current { grid-template-columns: 1fr auto; }
+  .admin-pop-current > div { grid-column: 1 / -1; }
   .user-auth-grid, .user-security-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {

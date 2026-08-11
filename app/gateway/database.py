@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.pool import StaticPool
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 logger = logging.getLogger("xiaoasi_mail_gateway.database")
 
 
@@ -262,6 +262,7 @@ class GatewayDatabase:
                     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
                     user_auth_code_hash TEXT,
                     user_auth_code_updated_at TEXT,
+                    admin_pop_auth_code TEXT,
                     admin_pop_auth_code_hash TEXT,
                     admin_pop_auth_code_updated_at TEXT,
                     pop_enabled INTEGER NOT NULL DEFAULT 1,
@@ -293,6 +294,16 @@ class GatewayDatabase:
                     expires_at TEXT NOT NULL,
                     last_seen_at TEXT NOT NULL,
                     revoked_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS user_registration_codes (
+                    id TEXT PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    code_hash TEXT NOT NULL,
+                    consumed INTEGER NOT NULL DEFAULT 0,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS credit_rules (
@@ -358,6 +369,9 @@ class GatewayDatabase:
                 connection.execute(
                     "ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS source_ip TEXT NOT NULL DEFAULT ''"
                 )
+                connection.execute(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_pop_auth_code TEXT"
+                )
             else:
                 mailbox_columns = {
                     str(row["name"])
@@ -405,6 +419,13 @@ class GatewayDatabase:
                 if "source_ip" not in audit_columns:
                     connection.execute("ALTER TABLE admin_audit_logs ADD COLUMN source_ip TEXT NOT NULL DEFAULT ''")
 
+                user_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(users)").fetchall()
+                }
+                if "admin_pop_auth_code" not in user_columns:
+                    connection.execute("ALTER TABLE users ADD COLUMN admin_pop_auth_code TEXT")
+
             connection.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS idx_domains_instance ON mail_domains(instance_id);
@@ -414,6 +435,10 @@ class GatewayDatabase:
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_admin_role ON users(role) WHERE role='admin';
                 CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys(user_id, enabled);
                 CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id, expires_at);
+                CREATE INDEX IF NOT EXISTS idx_user_registration_codes_email
+                    ON user_registration_codes(email, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_user_registration_codes_expires
+                    ON user_registration_codes(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_credit_transactions_user ON credit_transactions(user_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_mailboxes_owner ON mailboxes(owner_user_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_request_logs_user ON gateway_request_logs(user_id, created_at DESC);

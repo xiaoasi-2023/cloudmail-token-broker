@@ -74,6 +74,15 @@ function asList<T>(payload: unknown): T[] {
 }
 
 export const userApi = {
+  registrationConfig: async () => unwrap(await request<ApiEnvelope<{ enabled: boolean; code_ttl_seconds: number; code_cooldown_seconds: number }> | { enabled: boolean; code_ttl_seconds: number; code_cooldown_seconds: number }>("/auth/registration-config")),
+  sendRegisterCode: async (email: string) => unwrap(await request<ApiEnvelope<{ ttl_seconds: number; cooldown_seconds: number }> | { ttl_seconds: number; cooldown_seconds: number }>("/auth/register-code", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  })),
+  register: async (username: string, email: string, password: string, code: string) => unwrap(await request<ApiEnvelope<UserProfile> | UserProfile>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ username, email, password, code }),
+  })),
   me: async () => unwrap(await request<ApiEnvelope<UserProfile> | UserProfile>("/me")),
   login: (username: string, password: string) =>
     request<ApiEnvelope<{ username?: string }> | { username?: string }>("/auth/login", {

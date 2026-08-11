@@ -19,6 +19,9 @@
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
+| GET | `/user-api/auth/registration-config` | 查询是否开放自助注册及验证码时间配置 |
+| POST | `/user-api/auth/register-code` | 向注册邮箱发送 6 位验证码 |
+| POST | `/user-api/auth/register` | 校验邮箱验证码并创建普通用户 |
 | POST | `/user-api/auth/login` | 用户登录 |
 | POST | `/user-api/auth/logout` | 用户退出 |
 | PUT | `/user-api/auth/password` | 修改登录密码 |
@@ -29,7 +32,6 @@
 | PUT | `/user-api/auth-code` | 设置或重置用户 POP 授权码 |
 | GET | `/user-api/credits` | 查询积分余额和流水摘要 |
 | GET | `/user-api/mailboxes` | 查询自己的邮箱记录 |
-| POST | `/user-api/auth/register` | 预留注册接口，默认关闭 |
 
 ### 普通业务 API
 
@@ -54,7 +56,7 @@
 | POST | `/admin-api/users/{userId}/credits/adjust` | 调整用户积分 |
 | GET | `/admin-api/users/{userId}/credit-transactions` | 用户积分流水 |
 | GET/PUT | `/admin-api/credit-rules` | 查询或修改积分规则 |
-| PUT | `/admin-api/pop-auth-code` | 设置或重置管理员全局 POP 授权码 |
+| GET/PUT | `/admin-api/pop-auth-code` | 查询、设置或修改管理员全局 POP 授权码明文 |
 | GET | `/admin-api/mailboxes` | 查看全部邮箱 |
 | GET | `/admin-api/instances` | CloudMail 实例 |
 | POST | `/admin-api/instances` | 新增 CloudMail 实例 |
@@ -68,6 +70,33 @@
 管理员接口只使用管理员会话，不需要用户 `X-API-Key` 或 `mailboxToken`。当前 HTTP 管理 API 提供全部邮箱记录和请求日志查询；管理员查看邮件正文使用 POP3 `110` + 管理员全局 POP 授权码，不提供独立的 HTTP 邮件内容、刷新、释放或邮箱 POP 开关接口。用户释放自己的邮箱仍使用普通业务 API 的 `DELETE /v1/mailboxes/{id}`。
 
 管理员执行 `POST /admin-api/users/{userId}/reset-auth-code` 时，只会立即使该用户旧授权码失效并清除“已配置”状态，不向管理员返回新授权码明文。普通用户需要登录用户中心重新设置自己的 `userAuthCode`；这样管理员拥有全量邮箱访问权限，但不会接触普通用户授权码明文。
+
+### 邮箱验证码注册
+
+部署配置 `USER_REGISTRATION_ENABLED=true` 后，用户中心 `/user/` 会显示注册入口。先发送验证码：
+
+```http
+POST /user-api/auth/register-code
+Content-Type: application/json
+
+{"email":"user@example.com"}
+```
+
+再提交注册：
+
+```http
+POST /user-api/auth/register
+Content-Type: application/json
+
+{
+  "username": "user001",
+  "email": "user@example.com",
+  "password": "至少10位登录密码",
+  "code": "123456"
+}
+```
+
+注册只能创建普通 `user`，初始积分读取管理端 `create_mailbox` 规则中的新用户初始积分。验证码默认 10 分钟有效，同一邮箱默认 60 秒内不能重复发送，连续输错 5 次后失效；验证码明文不会写入数据库或日志。注册成功后可使用账号或邮箱登录。
 
 ## 3. 创建邮箱
 
@@ -219,6 +248,9 @@ Authorization: Mailbox <mailboxToken>
 | --- | --- | --- |
 | 400 | `DOMAIN_SELECTOR_CONFLICT` | 同时传入 `domain` 与 `domains` |
 | 400 | `DOMAIN_NOT_ALLOWED` | 域名不在允许列表 |
+| 400 | `EMAIL_INVALID` | 注册邮箱格式无效 |
+| 400 | `USERNAME_INVALID` | 注册账号格式无效 |
+| 400 | `REGISTER_CODE_INVALID` | 注册验证码错误、过期或输错次数过多 |
 | 401 | `API_KEY_INVALID` | 用户调用密钥无效或已撤销 |
 | 401 | `MAILBOX_TOKEN_INVALID` | 邮箱凭证无效 |
 | 401 | `MAILBOX_SESSION_EXPIRED` | 邮箱会话凭证过期 |
@@ -228,17 +260,21 @@ Authorization: Mailbox <mailboxToken>
 | 404 | `MAILBOX_NOT_FOUND` | 邮箱记录不存在 |
 | 409 | `IDEMPOTENCY_CONFLICT` | 幂等键对应不同参数 |
 | 409 | `USER_AUTH_CODE_REQUIRED` | 创建邮箱前未设置用户授权码 |
+| 409 | `USER_CONFLICT` | 注册账号或邮箱已存在 |
 | 402 | `INSUFFICIENT_CREDITS` | 积分不足 |
 | 502 | `MAILBOX_CREATE_FAILED` | CloudMail 创建失败 |
 | 502 | `POP_QUERY_FAILED` | POP 查询上游邮件失败 |
 | 503 | `NO_AVAILABLE_DOMAIN` | 没有可用域名 |
 | 429 | `RATE_LIMITED` | 超过限流 |
+| 429 | `REGISTER_CODE_TOO_FREQUENT` | 同一邮箱发送验证码过于频繁 |
+| 502 | `EMAIL_SEND_FAILED` / `SMTP_AUTH_FAILED` | SMTP 发信或认证失败 |
 
 ## 10. 安全要求
 
 - 用户登录密码、普通用户 POP 授权码、管理员全局 POP 授权码和调用密钥分别存储；
 - 完整授权码和调用密钥只展示一次；
 - 管理员不能查看普通用户授权码明文；
+- 管理员全局 POP 授权码按产品要求直接以明文存入数据库，仅允许管理员会话通过 `/admin-api/pop-auth-code` 查询和修改；
 - 管理员用户、积分、授权码、实例和域名等 HTTP 管理操作必须审计；POP3 邮件读取通过独立 TCP 会话完成，当前不提供独立的 HTTP POP 读取或 POP 会话审计接口；
 - 日志不得记录授权码、调用密钥、邮箱内部密码、CloudMail Token、验证码明文或完整邮件正文；
 - 110 明文模式必须限制网络来源；

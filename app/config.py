@@ -45,6 +45,15 @@ class Settings:
     admin_login_rate_limit_per_minute: int = 10
     user_session_ttl_seconds: int = 28800
     user_registration_enabled: bool = False
+    user_registration_code_ttl_seconds: int = 600
+    user_registration_code_cooldown_seconds: int = 60
+    user_registration_rate_limit_per_minute: int = 10
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: bool = True
     pop3_enabled: bool = True
     pop3_bind_host: str = "0.0.0.0"
     pop3_port: int = 8110
@@ -79,6 +88,21 @@ class Settings:
             ),
             user_session_ttl_seconds=_int_env("USER_SESSION_TTL_SECONDS", 28800, 300, 604800),
             user_registration_enabled=_bool_env("USER_REGISTRATION_ENABLED", False),
+            user_registration_code_ttl_seconds=_int_env(
+                "USER_REGISTRATION_CODE_TTL_SECONDS", 600, 60, 3600
+            ),
+            user_registration_code_cooldown_seconds=_int_env(
+                "USER_REGISTRATION_CODE_COOLDOWN_SECONDS", 60, 10, 600
+            ),
+            user_registration_rate_limit_per_minute=_int_env(
+                "USER_REGISTRATION_RATE_LIMIT_PER_MINUTE", 10, 1, 1000
+            ),
+            smtp_host=_env("SMTP_HOST"),
+            smtp_port=_int_env("SMTP_PORT", 465, 1, 65535),
+            smtp_username=_env("SMTP_USERNAME"),
+            smtp_password=_env("SMTP_PASSWORD"),
+            smtp_from=_env("SMTP_FROM"),
+            smtp_tls=_bool_env("SMTP_TLS", True),
             pop3_enabled=_bool_env("POP3_ENABLED", True),
             pop3_bind_host=_env("POP3_BIND_HOST", "0.0.0.0") or "0.0.0.0",
             pop3_port=_int_env("POP3_PORT", 8110, 0, 65535),
@@ -111,3 +135,16 @@ class Settings:
                 raise RuntimeError("ADMIN_PASSWORD_HASH 格式无效")
             if gateway_missing:
                 raise RuntimeError("启用邮箱网关时缺少配置: " + ", ".join(gateway_missing))
+            if self.user_registration_enabled:
+                smtp_missing = [
+                    name
+                    for name, value in (
+                        ("SMTP_HOST", self.smtp_host),
+                        ("SMTP_USERNAME", self.smtp_username),
+                        ("SMTP_PASSWORD", self.smtp_password),
+                        ("SMTP_FROM", self.smtp_from or self.smtp_username),
+                    )
+                    if not value
+                ]
+                if smtp_missing:
+                    raise RuntimeError("启用用户注册时缺少配置: " + ", ".join(smtp_missing))

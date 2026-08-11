@@ -48,3 +48,30 @@ def test_gateway_rejects_non_postgresql_database_url(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(RuntimeError, match="PostgreSQL"):
         Settings.from_env()
+
+
+def test_registration_requires_complete_smtp_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_gateway_environment(monkeypatch)
+    monkeypatch.setenv("USER_REGISTRATION_ENABLED", "true")
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+    with pytest.raises(RuntimeError, match="SMTP_PASSWORD"):
+        Settings.from_env()
+
+
+def test_registration_smtp_configuration_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_gateway_environment(monkeypatch)
+    monkeypatch.setenv("USER_REGISTRATION_ENABLED", "true")
+    monkeypatch.setenv("SMTP_HOST", "smtp.163.com")
+    monkeypatch.setenv("SMTP_PORT", "465")
+    monkeypatch.setenv("SMTP_USERNAME", "notice@example.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "smtp-authorization-code")
+    monkeypatch.setenv("SMTP_FROM", "notice@example.com")
+    monkeypatch.setenv("SMTP_TLS", "true")
+
+    settings = Settings.from_env()
+
+    assert settings.user_registration_enabled is True
+    assert settings.smtp_host == "smtp.163.com"
+    assert settings.smtp_port == 465
+    assert settings.smtp_tls is True

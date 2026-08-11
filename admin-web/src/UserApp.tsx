@@ -9,6 +9,7 @@ import {
   KeyOutlined,
   LockOutlined,
   LogoutOutlined,
+  MailOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   ReloadOutlined,
@@ -108,6 +109,23 @@ function creditBalance(user: UserProfile) {
 function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
   const { message } = AntApp.useApp();
   const [loading, setLoading] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [registrationEnabled, setRegistrationEnabled] = useState(false);
+  const [registerForm] = Form.useForm<{ username: string; email: string; code: string; password: string; confirm: string }>();
+
+  useEffect(() => {
+    void userApi.registrationConfig()
+      .then((config) => setRegistrationEnabled(Boolean(config.enabled)))
+      .catch(() => setRegistrationEnabled(false));
+  }, []);
+
+  useEffect(() => {
+    if (countdown <= 0) return undefined;
+    const timer = window.setInterval(() => setCountdown((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [countdown]);
 
   const submit = async (values: { username: string; password: string }) => {
     setLoading(true);
@@ -115,6 +133,35 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
       await userApi.login(values.username, values.password);
       await onSuccess();
       message.success("登录成功");
+    } catch (error) {
+      message.error(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sendRegisterCode = async () => {
+    try {
+      await registerForm.validateFields(["email"]);
+      const email = registerForm.getFieldValue("email");
+      setSendingCode(true);
+      const result = await userApi.sendRegisterCode(email);
+      setCountdown(Number(result.cooldown_seconds || 60));
+      message.success("验证码已发送，请检查邮箱");
+    } catch (error) {
+      if (error instanceof Error) message.error(getErrorMessage(error));
+    } finally {
+      setSendingCode(false);
+    }
+  };
+
+  const register = async (values: { username: string; email: string; code: string; password: string }) => {
+    setLoading(true);
+    try {
+      await userApi.register(values.username, values.email, values.password, values.code);
+      await userApi.login(values.username, values.password);
+      await onSuccess();
+      message.success("注册成功，已进入用户中心");
     } catch (error) {
       message.error(getErrorMessage(error));
     } finally {
@@ -137,10 +184,10 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
       </section>
       <section className="user-login-panel">
         <div className="user-login-form-wrap">
-          <Text className="section-index">ACCOUNT / SIGN IN</Text>
-          <Title level={2}>用户登录</Title>
-          <Paragraph type="secondary">使用管理员创建的普通用户账号进入用户中心。</Paragraph>
-          <Form layout="vertical" onFinish={submit} requiredMark={false} size="large">
+          <Text className="section-index">ACCOUNT / {mode === "login" ? "SIGN IN" : "REGISTER"}</Text>
+          <Title level={2}>{mode === "login" ? "用户登录" : "注册用户账号"}</Title>
+          <Paragraph type="secondary">{mode === "login" ? (registrationEnabled ? "使用账号或邮箱登录，也可以注册新的普通用户。" : "使用管理员创建的普通用户账号进入用户中心。") : "使用邮箱验证码创建普通用户，初始积分按管理端规则发放。"}</Paragraph>
+          {mode === "login" ? <Form layout="vertical" onFinish={submit} requiredMark={false} size="large">
             <Form.Item label="用户账号 / 邮箱" name="username" rules={[{ required: true, message: "请输入用户账号或邮箱" }]}>
               <Input autoComplete="username" placeholder="输入账号或邮箱" prefix={<UserOutlined />} />
             </Form.Item>
@@ -148,7 +195,30 @@ function UserLogin({ onSuccess }: { onSuccess: () => Promise<void> | void }) {
               <Input.Password autoComplete="current-password" placeholder="输入登录密码" prefix={<LockOutlined />} />
             </Form.Item>
             <Button block type="primary" htmlType="submit" loading={loading}>进入用户中心</Button>
-          </Form>
+          </Form> : <Form form={registerForm} layout="vertical" onFinish={register} requiredMark={false} size="large">
+            <Form.Item label="用户账号" name="username" rules={[{ required: true, message: "请输入用户账号" }, { min: 3, message: "用户账号至少 3 位" }, { pattern: /^[a-zA-Z0-9_.-]+$/, message: "账号只能包含字母、数字、点、下划线和短横线" }]}>
+              <Input autoComplete="username" placeholder="用于登录，例如 xiaoasi" prefix={<UserOutlined />} />
+            </Form.Item>
+            <Form.Item label="注册邮箱" name="email" rules={[{ required: true, message: "请输入注册邮箱" }, { type: "email", message: "请输入有效的邮箱地址" }]}>
+              <Input autoComplete="email" placeholder="接收注册验证码" prefix={<MailOutlined />} />
+            </Form.Item>
+            <Form.Item label="邮箱验证码" required>
+              <Space.Compact block>
+                <Form.Item name="code" noStyle rules={[{ required: true, message: "请输入邮箱验证码" }, { pattern: /^\d{6}$/, message: "请输入 6 位数字验证码" }]}>
+                  <Input inputMode="numeric" maxLength={6} placeholder="6 位验证码" prefix={<SafetyCertificateOutlined />} />
+                </Form.Item>
+                <Button className="register-code-button" loading={sendingCode} disabled={countdown > 0} onClick={() => void sendRegisterCode()}>{countdown > 0 ? `${countdown}s 后重试` : "获取验证码"}</Button>
+              </Space.Compact>
+            </Form.Item>
+            <Form.Item label="登录密码" name="password" rules={[{ required: true, message: "请输入登录密码" }, { min: 10, message: "登录密码至少 10 位" }]}>
+              <Input.Password autoComplete="new-password" placeholder="至少 10 位" prefix={<LockOutlined />} />
+            </Form.Item>
+            <Form.Item label="确认密码" name="confirm" dependencies={["password"]} rules={[{ required: true, message: "请再次输入登录密码" }, ({ getFieldValue }) => ({ validator(_, value) { return !value || getFieldValue("password") === value ? Promise.resolve() : Promise.reject(new Error("两次输入的密码不一致")); } })]}>
+              <Input.Password autoComplete="new-password" placeholder="再次输入登录密码" prefix={<LockOutlined />} />
+            </Form.Item>
+            <Button block type="primary" htmlType="submit" loading={loading}>验证邮箱并注册</Button>
+          </Form>}
+          {registrationEnabled && <Button className="auth-mode-switch" type="link" block onClick={() => setMode((value) => value === "login" ? "register" : "login")}>{mode === "login" ? "没有账号？使用邮箱注册" : "已有账号？返回登录"}</Button>}
           <div className="secure-note"><SafetyCertificateOutlined /> 使用 HttpOnly Cookie 会话，不在浏览器保存登录凭证</div>
         </div>
       </section>

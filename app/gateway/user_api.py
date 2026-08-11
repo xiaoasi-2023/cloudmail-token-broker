@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response
+from fastapi.concurrency import run_in_threadpool
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.gateway.database import DatabaseIntegrityError
+from app.gateway.registration import UserRegistrationError, UserRegistrationService
 from app.gateway.user_auth import UserSessionService
 from app.gateway.user_repository import UserRepository
 
@@ -17,10 +19,11 @@ class UserApiContext:
     sessions: UserSessionService
     cookie_secure: bool = True
     registration_enabled: bool = False
+    registration: UserRegistrationService | None = None
 
 
 class UserLoginRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=100)
+    username: str = Field(min_length=1, max_length=320)
     password: str = Field(min_length=1, max_length=1000)
 
 
@@ -56,7 +59,12 @@ class UserAuthCodeRequest(BaseModel):
 class UserRegisterRequest(BaseModel):
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=10, max_length=1000)
-    email: str | None = Field(default=None, max_length=320)
+    email: str = Field(min_length=3, max_length=320)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class UserRegisterCodeRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
 
 
 def create_user_router(context: UserApiContext) -> APIRouter:
@@ -91,6 +99,33 @@ def create_user_router(context: UserApiContext) -> APIRouter:
             path="/",
         )
         return {"ok": True, "data": user}
+
+    @router.get("/auth/registration-config")
+    async def registration_config():
+        return {
+            "ok": True,
+            "data": {
+                "enabled": context.registration_enabled and context.registration is not None,
+                "code_ttl_seconds": context.registration.ttl_seconds if context.registration else 0,
+                "code_cooldown_seconds": context.registration.cooldown_seconds if context.registration else 0,
+            },
+        }
+
+    @router.post("/auth/register-code")
+    async def send_register_code(body: UserRegisterCodeRequest):
+        if not context.registration_enabled or context.registration is None:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "USER_REGISTRATION_DISABLED", "message": "用户注册功能已关闭"},
+            )
+        try:
+            data = await run_in_threadpool(context.registration.send_code, body.email)
+        except UserRegistrationError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
+        return {"ok": True, "data": data}
 
     @router.post("/auth/logout")
     async def logout(
@@ -168,17 +203,24 @@ def create_user_router(context: UserApiContext) -> APIRouter:
 
     @router.post("/auth/register", status_code=201)
     async def register(body: UserRegisterRequest):
-        if not context.registration_enabled:
+        if not context.registration_enabled or context.registration is None:
             raise HTTPException(
                 status_code=403,
                 detail={"code": "USER_REGISTRATION_DISABLED", "message": "用户注册功能已关闭"},
             )
         try:
-            user = context.users.create_user(
+            user = await run_in_threadpool(
+                context.registration.register,
                 username=body.username,
                 password=body.password,
                 email=body.email,
+                code=body.code,
             )
+        except UserRegistrationError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": exc.message},
+            ) from exc
         except DatabaseIntegrityError as exc:
             raise HTTPException(status_code=409, detail={"code": "USER_CONFLICT", "message": "用户名或邮箱已存在"}) from exc
         return {"ok": True, "data": user}

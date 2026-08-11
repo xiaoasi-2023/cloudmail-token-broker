@@ -11,6 +11,7 @@ Xiaoasi Mail Gateway 是一个统一邮箱网关，负责管理多个 CloudMail 
 - 多个 CloudMail 实例和多个邮箱域名；
 - 自动、指定单域名和候选域名创建邮箱；
 - 用户中心、用户级 `X-API-Key` 和用户级 `userAuthCode`；
+- 可选的邮箱验证码自助注册，支持账号或邮箱登录；
 - 创建邮箱按管理端配置扣除积分；
 - 唯一管理员管理全部用户、邮箱、日志、实例、域名和积分；
 - 管理员独立 POP 授权码，可以读取全部未物理删除且上游仍存在的邮箱；
@@ -61,7 +62,17 @@ MAILBOX_SESSION_SECRET=<另一条至少32字节随机值>
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD_HASH=<推荐：pbkdf2_sha256 格式的管理员密码哈希>
 ADMIN_COOKIE_SECURE=true
-USER_REGISTRATION_ENABLED=false
+USER_REGISTRATION_ENABLED=true
+USER_REGISTRATION_CODE_TTL_SECONDS=600
+USER_REGISTRATION_CODE_COOLDOWN_SECONDS=60
+USER_REGISTRATION_RATE_LIMIT_PER_MINUTE=10
+
+SMTP_HOST=smtp.163.com
+SMTP_PORT=465
+SMTP_USERNAME=<发件邮箱>
+SMTP_PASSWORD=<SMTP 授权码，不是邮箱登录密码>
+SMTP_FROM=<发件邮箱>
+SMTP_TLS=true
 
 POP3_ENABLED=true
 POP3_BIND_HOST=0.0.0.0
@@ -90,9 +101,9 @@ POP3 `110` 是独立 TCP 服务，不能通过普通 HTTP 反向代理；宿主�
 
 1. 使用唯一管理员账号登录 `/admin/`。
 2. 配置 CloudMail 实例和邮箱域名。
-3. 在管理端设置管理员全局 POP 授权码，完整值只展示一次。
-4. 创建普通用户并设置初始积分。
-5. 普通用户登录 `/user/`，设置自己的 `userAuthCode`。
+3. 在管理端设置管理员全局 POP 授权码；该值按明文保存，可在管理端随时查看、复制和修改。
+4. 开启自助注册后，普通用户在 `/user/` 输入账号、邮箱和密码，获取邮箱验证码后完成注册；关闭时仍由管理员创建用户。
+5. 普通用户使用账号或注册邮箱登录 `/user/`，设置自己的 `userAuthCode`。
 6. 普通用户在用户中心创建自己的 `X-API-Key`。
 7. 使用用户密钥调用 `POST /v1/mailboxes` 创建邮箱。
 

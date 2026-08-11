@@ -105,6 +105,8 @@ export interface CreditAdjustResult {
 export interface PopAuthCodeResult {
   configured: boolean;
   admin_pop_auth_code: string;
+  legacy_hash_only?: boolean;
+  updated_at?: string | null;
 }
 
 export interface InstancePayload {

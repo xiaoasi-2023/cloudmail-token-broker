@@ -29,6 +29,11 @@ from app.gateway.mailbox_service import MailboxGatewayService
 from app.gateway.mailbox_token import MailboxTokenSigner
 from app.gateway.pop3_provider import Pop3GatewayProvider
 from app.gateway.pop3_server import Pop3Server
+from app.gateway.registration import (
+    RegistrationEmailSender,
+    RegistrationEmailSettings,
+    UserRegistrationService,
+)
 from app.gateway.public_api import create_gateway_router
 from app.gateway.database_business_store import DatabaseGatewayBusinessStore
 from app.gateway.user_api import UserApiContext, create_user_router
@@ -73,12 +78,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             user_repository,
             ttl_seconds=resolved_settings.user_session_ttl_seconds,
         )
+        registration_service = None
+        if resolved_settings.user_registration_enabled:
+            registration_service = UserRegistrationService(
+                database,
+                user_repository,
+                RegistrationEmailSender(
+                    RegistrationEmailSettings(
+                        host=resolved_settings.smtp_host,
+                        port=resolved_settings.smtp_port,
+                        username=resolved_settings.smtp_username,
+                        password=resolved_settings.smtp_password,
+                        sender=resolved_settings.smtp_from or resolved_settings.smtp_username,
+                        use_tls=resolved_settings.smtp_tls,
+                    )
+                ),
+                code_secret=resolved_settings.mailbox_session_secret,
+                ttl_seconds=resolved_settings.user_registration_code_ttl_seconds,
+                cooldown_seconds=resolved_settings.user_registration_code_cooldown_seconds,
+            )
         user_router = create_user_router(
             UserApiContext(
                 users=user_repository,
                 sessions=user_sessions,
                 cookie_secure=resolved_settings.admin_cookie_secure,
                 registration_enabled=resolved_settings.user_registration_enabled,
+                registration=registration_service,
             )
         )
         business_store = DatabaseGatewayBusinessStore(database, cipher)
@@ -219,6 +244,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         f"gateway:mailbox:{client_key}",
                         resolved_settings.mailbox_poll_rate_limit_per_minute,
                     )
+            except GatewayBusinessError as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"code": exc.code, "message": exc.message},
+                    headers={"X-Request-ID": request_id},
+                )
+        if (
+            resolved_settings.gateway_enabled
+            and request.method == "POST"
+            and request.url.path in {"/user-api/auth/register-code", "/user-api/auth/register"}
+        ):
+            client_key = request.client.host if request.client else "unknown"
+            try:
+                rate_limiter.check(
+                    f"gateway:user-registration:{client_key}",
+                    resolved_settings.user_registration_rate_limit_per_minute,
+                )
             except GatewayBusinessError as exc:
                 return JSONResponse(
                     status_code=exc.status_code,

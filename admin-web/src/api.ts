@@ -101,6 +101,7 @@ export const api = {
   creditRules: async () => (await request<ApiEnvelope<CreditRule>>("/credit-rules")).data,
   updateCreditRules: async (data: Pick<CreditRule, "cost_points" | "initial_user_points">) =>
     (await request<ApiEnvelope<CreditRule>>("/credit-rules", { method: "PUT", body: JSON.stringify(data) })).data,
+  adminPopAuthCode: async () => (await request<ApiEnvelope<PopAuthCodeResult>>("/pop-auth-code")).data,
   setAdminPopAuthCode: (authCode: string) =>
     request<ApiEnvelope<PopAuthCodeResult>>("/pop-auth-code", { method: "PUT", body: JSON.stringify({ auth_code: authCode }) }),
 };

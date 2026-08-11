@@ -92,6 +92,13 @@ function formatTime(value?: string | null) {
   return value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "—";
 }
 
+function generatePopAuthCode(length = 32) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const randomValues = new Uint8Array(length);
+  window.crypto.getRandomValues(randomValues);
+  return Array.from(randomValues, (value) => alphabet[value & 63]).join("");
+}
+
 function statusTag(status?: string) {
   const normalized = (status || "unknown").toLowerCase();
   const config: Record<string, { color: string; text: string }> = {
@@ -517,23 +524,32 @@ function CreditSettingsPage() {
   const { message } = AntApp.useApp();
   const [rule, setRule] = useState<CreditRule>();
   const [adminPopConfigured, setAdminPopConfigured] = useState(false);
+  const [adminPopCode, setAdminPopCode] = useState("");
+  const [legacyHashOnly, setLegacyHashOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingRule, setSavingRule] = useState(false);
   const [savingPop, setSavingPop] = useState(false);
-  const [oneTimeCode, setOneTimeCode] = useState("");
+  const [popCodeVisible, setPopCodeVisible] = useState(false);
   const [ruleForm] = Form.useForm<Pick<CreditRule, "cost_points" | "initial_user_points">>();
-  const [popForm] = Form.useForm<{ auth_code: string; confirm: string }>();
+  const [popForm] = Form.useForm<{ auth_code?: string; confirm?: string }>();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextRule, users] = await Promise.all([api.creditRules(), api.users()]);
+      const [nextRule, popConfig] = await Promise.all([api.creditRules(), api.adminPopAuthCode()]);
       setRule(nextRule);
       ruleForm.setFieldsValue({ cost_points: nextRule.cost_points, initial_user_points: nextRule.initial_user_points });
-      setAdminPopConfigured(Boolean(users.find((user) => user.role === "admin")?.has_admin_pop_auth_code));
+      setAdminPopConfigured(Boolean(popConfig.configured));
+      setAdminPopCode(popConfig.admin_pop_auth_code || "");
+      setLegacyHashOnly(Boolean(popConfig.legacy_hash_only));
+      if (popConfig.admin_pop_auth_code) {
+        popForm.setFieldsValue({ auth_code: popConfig.admin_pop_auth_code, confirm: popConfig.admin_pop_auth_code });
+      } else {
+        popForm.resetFields();
+      }
     } catch (e) { message.error(getErrorMessage(e)); }
     finally { setLoading(false); }
-  }, [message, ruleForm]);
+  }, [message, popForm, ruleForm]);
   useEffect(() => { void load(); }, [load]);
 
   const saveRule = async () => {
@@ -543,20 +559,52 @@ function CreditSettingsPage() {
     catch (e) { message.error(getErrorMessage(e)); }
     finally { setSavingRule(false); }
   };
-  const savePopCode = async (values: { auth_code: string; confirm: string }) => {
+  const fillGeneratedPopCode = () => {
+    const generated = generatePopAuthCode();
+    popForm.setFields([
+      { name: "auth_code", value: generated, errors: [] },
+      { name: "confirm", value: generated, errors: [] },
+    ]);
+    setPopCodeVisible(true);
+    message.success("已生成高强度授权码，可查看确认后再保存");
+  };
+  const savePopCode = async (values: { auth_code?: string; confirm?: string }) => {
+    let authCode = values.auth_code?.trim() || "";
+    const confirm = values.confirm?.trim() || "";
+    popForm.setFields([{ name: "auth_code", errors: [] }, { name: "confirm", errors: [] }]);
+
+    if (!authCode && !confirm) {
+      authCode = generatePopAuthCode();
+    } else if (!authCode || !confirm) {
+      popForm.setFields([
+        { name: "auth_code", errors: authCode ? [] : ["请输入授权码，或清空两个输入框自动生成"] },
+        { name: "confirm", errors: confirm ? [] : ["请确认授权码，或清空两个输入框自动生成"] },
+      ]);
+      return;
+    } else if (authCode.length < 10) {
+      popForm.setFields([{ name: "auth_code", errors: ["授权码至少 10 位"] }]);
+      return;
+    } else if (authCode !== confirm) {
+      popForm.setFields([{ name: "confirm", errors: ["两次输入的授权码不一致"] }]);
+      return;
+    }
+
     setSavingPop(true);
     try {
-      const result = await api.setAdminPopAuthCode(values.auth_code);
-      setOneTimeCode(result.data.admin_pop_auth_code || values.auth_code);
-      popForm.resetFields();
-      message.success(adminPopConfigured ? "全局 POP 授权码已重置" : "全局 POP 授权码已设置");
+      const result = await api.setAdminPopAuthCode(authCode);
+      const savedCode = result.data.admin_pop_auth_code || authCode;
+      setAdminPopCode(savedCode);
+      setAdminPopConfigured(true);
+      setLegacyHashOnly(false);
+      popForm.setFieldsValue({ auth_code: savedCode, confirm: savedCode });
+      setPopCodeVisible(true);
+      message.success(adminPopConfigured ? "全局 POP 授权码已更新，可随时查看" : "全局 POP 授权码已设置，可随时查看");
       await load();
     } catch (e) { message.error(getErrorMessage(e)); }
     finally { setSavingPop(false); }
   };
 
   return <>
-    {oneTimeCode && <Modal open title="保存管理员全局 POP 授权码" onCancel={() => setOneTimeCode("")} onOk={() => setOneTimeCode("")} okText="我已安全保存" cancelButtonProps={{ style: { display: "none" } }} destroyOnClose><Alert type="warning" showIcon message="完整值只显示这一次" description="关闭后管理端不会再次显示该授权码，请立即保存到安全位置。" /><div className="one-time-secret"><Text code copyable={{ text: oneTimeCode }}>{oneTimeCode}</Text></div></Modal>}
     <div className="admin-settings-grid">
       <Card className="admin-setting-card" title={<span><WalletOutlined /> 邮箱积分规则</span>} loading={loading} extra={rule && <Text type="secondary">更新于 {formatTime(rule.updated_at)}</Text>}>
         <Alert className="form-alert" type="info" showIcon message="规则作用于新建邮箱" description="每次创建邮箱会按单次费用扣除积分；新用户初始积分也从这里读取。" />
@@ -567,11 +615,17 @@ function CreditSettingsPage() {
         </Form>
       </Card>
       <Card className="admin-setting-card admin-pop-card" title={<span><SafetyCertificateOutlined /> 管理员全局 POP 授权码</span>} loading={loading}>
-        <div className={`admin-pop-status ${adminPopConfigured ? "ready" : "not-ready"}`}><span className="auth-status-dot" /><div><b>{adminPopConfigured ? "已配置全局授权码" : "尚未配置全局授权码"}</b><small>管理员使用该授权码登录 POP3 时，可访问管理员账号下的邮箱。</small></div></div>
+        <div className={`admin-pop-status ${adminPopConfigured ? "ready" : "not-ready"}`}><span className="auth-status-dot" /><div><b>{adminPopConfigured ? "已配置全局授权码" : "尚未配置全局授权码"}</b><small>管理员使用该授权码登录 POP3 时，可读取系统中全部可查询邮箱。</small></div></div>
+        {legacyHashOnly && <Alert className="admin-pop-legacy-alert" type="warning" showIcon message="当前是旧版哈希数据，无法还原明文" description="请重新输入或自动生成一次。保存后会改为明文存储，之后可在本页随时查看和复制。" />}
+        {adminPopCode && <div className="admin-pop-current"><div><Text>当前明文授权码</Text><small>该值直接保存在数据库中</small></div><Text code copyable={{ text: adminPopCode }}>{popCodeVisible ? adminPopCode : "••••••••••••••••"}</Text><Button type="link" onClick={() => setPopCodeVisible((visible) => !visible)}>{popCodeVisible ? "隐藏" : "显示"}</Button></div>}
         <Form form={popForm} layout="vertical" requiredMark={false} onFinish={savePopCode} className="admin-pop-form">
-          <Form.Item label={adminPopConfigured ? "新的全局 POP 授权码" : "全局 POP 授权码"} name="auth_code" rules={[{ required: true, message: "请输入 POP 授权码" }, { min: 10, message: "授权码至少 10 位" }]}><Input.Password autoComplete="new-password" placeholder="输入新的授权码" /></Form.Item>
-          <Form.Item label="确认授权码" name="confirm" dependencies={["auth_code"]} rules={[{ required: true, message: "请再次输入授权码" }, ({ getFieldValue }) => ({ validator(_, value) { return !value || getFieldValue("auth_code") === value ? Promise.resolve() : Promise.reject(new Error("两次输入的授权码不一致")); } })]}><Input.Password autoComplete="new-password" placeholder="再次输入授权码" /></Form.Item>
-          <Button type="primary" htmlType="submit" loading={savingPop}>{adminPopConfigured ? "重置全局授权码" : "设置全局授权码"}</Button>
+          <div className="admin-pop-helper"><Text>授权码按明文保存，可随时查看和复制；两个输入框都留空时，点击保存会自动生成。</Text><Button type="link" onClick={() => setPopCodeVisible((visible) => !visible)}>{popCodeVisible ? "隐藏输入内容" : "显示输入内容"}</Button></div>
+          <Form.Item label={adminPopConfigured ? "修改全局 POP 授权码" : "全局 POP 授权码"} name="auth_code"><Input.Password autoComplete="new-password" visibilityToggle={{ visible: popCodeVisible, onVisibleChange: setPopCodeVisible }} placeholder="手动输入，或留空自动生成" /></Form.Item>
+          <Form.Item label="确认授权码" name="confirm"><Input.Password autoComplete="new-password" visibilityToggle={{ visible: popCodeVisible, onVisibleChange: setPopCodeVisible }} placeholder="再次输入；自动生成时可留空" /></Form.Item>
+          <Space className="admin-pop-actions" wrap>
+            <Button type="primary" htmlType="submit" loading={savingPop}>{adminPopConfigured ? "保存当前授权码" : "保存或自动生成授权码"}</Button>
+            <Button icon={<ThunderboltOutlined />} onClick={fillGeneratedPopCode} disabled={savingPop}>自动生成并填入</Button>
+          </Space>
         </Form>
       </Card>
     </div>

@@ -274,6 +274,10 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
         audit_admin(username, "credit_rule.update", "credit_rule", "create_mailbox", request=request)
         return {"ok": True, "data": item}
 
+    @router.get("/pop-auth-code")
+    async def get_admin_pop_auth_code(_username: str = Depends(current_admin)):
+        return {"ok": True, "data": users.get_admin_pop_auth_code()}
+
     @router.put("/pop-auth-code")
     async def update_admin_pop_auth_code(
         body: PopAuthCodeRequest,
@@ -284,7 +288,7 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
         if item is None:
             raise HTTPException(status_code=400, detail={"code": "POP_AUTH_CODE_SET_FAILED", "message": users.error})
         audit_admin(username, "admin.pop_auth_code.update", "admin", str(item["id"]), request=request)
-        return {"ok": True, "data": {"configured": True, "admin_pop_auth_code": body.auth_code}}
+        return {"ok": True, "data": users.get_admin_pop_auth_code()}
 
     @router.get("/overview")
     async def overview(_username: str = Depends(current_admin)):
