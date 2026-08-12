@@ -668,9 +668,17 @@ function LogsPage() {
     { title: "调用人", key: "caller", width: 255, responsive: ["md"], render: (_, r) => <div className="request-caller"><b>{r.user_email || r.user_username || r.source || "未知调用方"}</b><span>{[r.user_username && r.user_username !== r.user_email ? r.user_username : "", r.source ? `密钥：${r.source}` : "", r.user_id ? `用户 ID ${r.user_id}` : ""].filter(Boolean).join(" · ") || "未关联用户"}</span></div> },
     { title: "状态", dataIndex: "status_code", width: 78, render: (v: number) => <Tag color={v >= 500 ? "error" : v >= 400 ? "warning" : "success"}>{v}</Tag> },
     { title: "耗时", dataIndex: "duration_ms", width: 82, render: (v) => v == null ? "—" : `${v} ms` },
-    { title: "错误码", dataIndex: "error_code", width: 125, responsive: ["lg"], render: (v) => v || "—" },
+    {
+      title: "错误信息",
+      key: "error",
+      width: 280,
+      responsive: ["lg"],
+      render: (_, r) => r.error_code || r.error_message
+        ? <div className="request-error"><b>{r.error_code || `HTTP_${r.status_code}`}</b><span>{r.error_message || "未记录错误说明"}</span></div>
+        : "—",
+    },
   ];
-  return <><div className="toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索接口、用户邮箱、用户名或密钥" style={{ width: 330 }} /><Select allowClear value={statusGroup || undefined} onChange={(value) => setStatusGroup(value || "")} placeholder="全部请求状态" style={{ width: 155 }} options={[{ value: "success", label: "成功（2xx/3xx）" }, { value: "client_error", label: "客户端错误（4xx）" }, { value: "server_error", label: "服务端错误（5xx）" }]} /></div><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>{error ? <ErrorState error={error} retry={load} /> : <Table className="dense-table request-log-table" size="small" rowKey={(r) => r.id || r.request_id || r.created_at} loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="没有符合条件的请求日志" /> }} scroll={{ x: 1015 }} />}</>;
+  return <><div className="toolbar"><div className="mailbox-filters"><Input.Search allowClear value={keyword} onChange={(event) => { const value = event.target.value; setKeyword(value); if (!value) setAppliedKeyword(""); }} onSearch={(value) => setAppliedKeyword(value.trim())} placeholder="搜索接口、用户邮箱、用户名、密钥或错误" style={{ width: 350 }} /><Select allowClear value={statusGroup || undefined} onChange={(value) => setStatusGroup(value || "")} placeholder="全部请求状态" style={{ width: 155 }} options={[{ value: "success", label: "成功（2xx/3xx）" }, { value: "client_error", label: "客户端错误（4xx）" }, { value: "server_error", label: "服务端错误（5xx）" }]} /></div><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>{error ? <ErrorState error={error} retry={load} /> : <Table className="dense-table request-log-table" size="small" rowKey={(r) => r.id || r.request_id || r.created_at} loading={loading} columns={columns} dataSource={items} locale={{ emptyText: <Empty description="没有符合条件的请求日志" /> }} scroll={{ x: 1170 }} />}</>;
 }
 
 function SettingsPage() {

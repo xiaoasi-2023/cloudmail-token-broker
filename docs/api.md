@@ -79,8 +79,9 @@
 列表查询补充：
 
 - `GET /user-api/mailboxes` 支持 `keyword`、`purpose`、`status`、`verification_status`，只查询当前登录用户的邮箱；返回字段包含当前用户有权查看的 `verification_code`，用户中心可直接复制已识别验证码。
-- `GET /admin-api/request-logs` 支持 `keyword` 和 `status_group`；`keyword` 可匹配接口、错误码、调用密钥名称、用户名或用户邮箱，`status_group` 可取 `success`、`client_error`、`server_error`。
-- 请求日志返回 `user_id`、`user_username`、`user_email` 和调用密钥名称，便于管理员确认实际调用人；日志仍不记录授权码、Token、验证码或邮件正文。
+- `GET /admin-api/request-logs` 支持 `keyword` 和 `status_group`；`keyword` 可匹配接口、业务错误码、中文错误信息、调用密钥名称、用户名或用户邮箱，`status_group` 可取 `success`、`client_error`、`server_error`。
+- 请求日志返回 `user_id`、`user_username`、`user_email`、调用密钥名称、`error_code` 和 `error_message`。管理端将业务错误码与中文错误说明放在同一列展示，便于直接定位 `503` 等失败原因。
+- 错误信息只记录接口返回给调用方的脱敏业务说明，不记录异常堆栈、授权码、Token、验证码、邮箱内部密码或邮件正文。
 
 ### 邮箱验证码注册
 

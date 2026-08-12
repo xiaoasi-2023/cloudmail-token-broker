@@ -55,7 +55,7 @@ def create_gateway_router(
             )
             return CreateMailboxResponse(data=data)
         except GatewayBusinessError as exc:
-            return _error_response(exc)
+            return _error_response(exc, http_request)
 
     @router.post(
         "/mailboxes/{mailbox_id}/verification-code",
@@ -80,7 +80,7 @@ def create_gateway_router(
             )
             return VerificationCodeResponse(data=data)
         except GatewayBusinessError as exc:
-            return _error_response(exc)
+            return _error_response(exc, http_request)
 
     @router.get("/mailboxes/{mailbox_id}", response_model=MailboxStatusResponse)
     async def mailbox_status(
@@ -101,7 +101,7 @@ def create_gateway_router(
                 )
             )
         except GatewayBusinessError as exc:
-            return _error_response(exc)
+            return _error_response(exc, request)
 
     @router.delete("/mailboxes/{mailbox_id}", response_model=MailboxStatusResponse)
     async def release_mailbox(
@@ -122,12 +122,14 @@ def create_gateway_router(
                 )
             )
         except GatewayBusinessError as exc:
-            return _error_response(exc)
+            return _error_response(exc, request)
 
     return router
 
 
-def _error_response(exc: GatewayBusinessError) -> JSONResponse:
+def _error_response(exc: GatewayBusinessError, request: Request) -> JSONResponse:
+    request.state.error_code = exc.code
+    request.state.error_message = exc.message
     return JSONResponse(
         status_code=exc.status_code,
         content={"code": exc.code, "message": exc.message},

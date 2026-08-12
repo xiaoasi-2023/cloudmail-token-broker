@@ -233,9 +233,10 @@ class GatewayRepository:
             like_keyword = f"%{normalized_keyword}%"
             conditions.append(
                 "(LOWER(l.endpoint) LIKE ? OR LOWER(l.source) LIKE ? OR "
-                "LOWER(l.error_code) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(u.email) LIKE ?)"
+                "LOWER(l.error_code) LIKE ? OR LOWER(l.error_message) LIKE ? OR "
+                "LOWER(u.username) LIKE ? OR LOWER(u.email) LIKE ?)"
             )
-            params.extend([like_keyword, like_keyword, like_keyword, like_keyword, like_keyword])
+            params.extend([like_keyword, like_keyword, like_keyword, like_keyword, like_keyword, like_keyword])
         normalized_status = status_group.strip().lower()
         if normalized_status == "success":
             conditions.append("l.status_code BETWEEN 200 AND 399")
@@ -267,16 +268,18 @@ class GatewayRepository:
         duration_ms: int,
         user_id: int | None = None,
         error_code: str = "",
+        error_message: str = "",
     ) -> None:
         with self.database.transaction() as connection:
             connection.execute(
                 """INSERT INTO gateway_request_logs
                 (request_id, endpoint, method, source, user_id, status_code, duration_ms,
                  error_code, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     request_id[:100], endpoint[:500], method[:20], source[:100],
-                    user_id, int(status_code), max(0, int(duration_ms)), error_code[:100], utc_now(),
+                    user_id, int(status_code), max(0, int(duration_ms)),
+                    error_code[:100], error_message[:1000], utc_now(),
                 ),
             )
 

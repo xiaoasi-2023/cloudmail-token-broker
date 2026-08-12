@@ -203,7 +203,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.pop3_server = pop3_server
 
     @app.exception_handler(GatewayBusinessError)
-    async def gateway_error_handler(_request: Request, exc: GatewayBusinessError):
+    async def gateway_error_handler(request: Request, exc: GatewayBusinessError):
+        request.state.error_code = exc.code
+        request.state.error_message = exc.message
         return JSONResponse(
             status_code=exc.status_code,
             content={"code": exc.code, "message": exc.message},
@@ -290,6 +292,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     user_id=getattr(request.state, "user_id", None),
                     status_code=response.status_code,
                     duration_ms=round((time.perf_counter() - started) * 1000),
+                    error_code=str(getattr(request.state, "error_code", "")),
+                    error_message=str(getattr(request.state, "error_message", "")),
                 )
             except Exception:
                 logger.exception("gateway_request_log_failed request_id=%s", request_id)

@@ -70,6 +70,39 @@ def test_gateway_enabled_app_boots_and_admin_can_manage_instances(tmp_path: Path
     assert overview.json()["data"]["domain_total"] == 1
 
 
+def test_request_log_records_and_exposes_business_error_details(tmp_path: Path) -> None:
+    app = create_app(gateway_settings(tmp_path))
+    user = app.state.user_repository.create_user(
+        username="log-user",
+        password="log-user-password",
+        email="log-user@example.com",
+        initial_points=5,
+    )
+    api_key = app.state.user_repository.create_api_key(user["id"], "diagnose-client")["api_key"]
+
+    with TestClient(app) as client:
+        failed = client.post(
+            "/v1/mailboxes",
+            headers={"X-API-Key": api_key, "Idempotency-Key": "diagnose-no-domain"},
+            json={"purpose": "openai", "name": "diagnose"},
+        )
+        login = client.post(
+            "/admin-api/auth/login",
+            json={"username": "admin", "password": "correct-password"},
+        )
+        logs = client.get("/admin-api/request-logs?keyword=当前没有可用邮箱域名")
+
+    assert failed.status_code == 503
+    assert failed.json() == {
+        "code": "NO_AVAILABLE_DOMAIN",
+        "message": "当前没有可用邮箱域名",
+    }
+    assert login.status_code == 200
+    assert len(logs.json()["data"]) == 1
+    assert logs.json()["data"][0]["error_code"] == "NO_AVAILABLE_DOMAIN"
+    assert logs.json()["data"][0]["error_message"] == "当前没有可用邮箱域名"
+
+
 def test_admin_login_is_rate_limited_by_source(tmp_path: Path) -> None:
     settings = replace(
         gateway_settings(tmp_path),

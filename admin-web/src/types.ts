@@ -70,6 +70,7 @@ export interface RequestLog {
   instance_name?: string;
   status_code: number;
   error_code?: string;
+  error_message?: string;
   duration_ms?: number;
   created_at: string;
 }
