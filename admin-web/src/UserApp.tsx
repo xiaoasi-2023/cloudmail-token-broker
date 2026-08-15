@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiOutlined,
+  BookOutlined,
   CheckCircleOutlined,
+  CodeOutlined,
   CopyOutlined,
   DashboardOutlined,
   DeleteOutlined,
   GiftOutlined,
+  GlobalOutlined,
   InboxOutlined,
   KeyOutlined,
   LockOutlined,
@@ -26,6 +29,7 @@ import {
   Badge,
   Button,
   Card,
+  Collapse,
   Descriptions,
   Divider,
   Drawer,
@@ -54,7 +58,7 @@ import type { BatchCreateMailboxesResult, CreditTransaction, UserApiKey, UserAut
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
-type UserPageKey = "overview" | "apiKeys" | "authCode" | "credits" | "mailboxes" | "security";
+type UserPageKey = "overview" | "apiKeys" | "authCode" | "credits" | "mailboxes" | "apiDocs" | "security";
 
 const userNavItems = [
   { key: "overview", icon: <DashboardOutlined />, label: "账户概览" },
@@ -62,6 +66,7 @@ const userNavItems = [
   { key: "authCode", icon: <SafetyCertificateOutlined />, label: "我的 POP 授权码" },
   { key: "credits", icon: <WalletOutlined />, label: "我的积分" },
   { key: "mailboxes", icon: <InboxOutlined />, label: "我的邮箱" },
+  { key: "apiDocs", icon: <BookOutlined />, label: "API 文档" },
   { key: "security", icon: <LockOutlined />, label: "账号安全" },
 ];
 
@@ -71,6 +76,7 @@ const userPageMeta: Record<UserPageKey, { title: string; description: string }> 
   authCode: { title: "我的 POP 授权码", description: "查看和管理 POP3 的完整连接参数" },
   credits: { title: "我的积分", description: "购买积分、兑换 CDK 并查看积分变更记录" },
   mailboxes: { title: "我的邮箱", description: "查看当前账户创建的邮箱及其生命周期状态" },
+  apiDocs: { title: "API 文档", description: "查看邮箱网关开放接口、鉴权方式和完整调用示例" },
   security: { title: "账号安全", description: "修改登录密码、撤销会话并安全退出用户中心" },
 };
 
@@ -631,6 +637,175 @@ function MailboxesPage() {
   </>;
 }
 
+function ApiCodeBlock({ title, code }: { title: string; code: string }) {
+  return <div className="api-doc-code-block">
+    <div className="api-doc-code-head"><span>{title}</span><Text copyable={{ text: code, tooltips: ["复制代码", "已复制"] }}>复制</Text></div>
+    <pre><code>{code}</code></pre>
+  </div>;
+}
+
+function ApiEndpointLabel({ method, path, title }: { method: "GET" | "POST" | "DELETE"; path: string; title: string }) {
+  return <div className="api-endpoint-label"><Tag className={`api-method api-method-${method.toLowerCase()}`}>{method}</Tag><code>{path}</code><span>{title}</span></div>;
+}
+
+function ApiDocsPage({ onNavigate }: { onNavigate: (page: UserPageKey) => void }) {
+  const baseUrl = typeof window === "undefined" ? "https://cloudmail.xiaoasi.xyz" : window.location.origin;
+  const createExample = `curl --request POST '${baseUrl}/v1/mailboxes' \\
+  --header 'Content-Type: application/json' \\
+  --header 'X-API-Key: <你的调用密钥>' \\
+  --header 'Idempotency-Key: mailbox-task-001' \\
+  --data '{
+    "purpose": "openai",
+    "addressPattern": "name_digits_4",
+    "name": "demo"
+  }'`;
+  const createResponse = `{
+  "code": 200,
+  "data": {
+    "mailboxId": "mbx_01k2example",
+    "address": "demo4821@example.com",
+    "domain": "example.com",
+    "mailboxToken": "eyJ...signature",
+    "createdAt": "2026-08-15T08:00:00+00:00",
+    "expiresAt": "2026-08-15T08:30:00+00:00"
+  }
+}`;
+  const statusExample = `curl --request GET '${baseUrl}/v1/mailboxes/<mailboxId>' \\
+  --header 'X-API-Key: <你的调用密钥>' \\
+  --header 'Authorization: Mailbox <mailboxToken>'`;
+  const statusResponse = `{
+  "code": 200,
+  "data": {
+    "mailboxId": "mbx_01k2example",
+    "address": "demo4821@example.com",
+    "domain": "example.com",
+    "status": "active",
+    "verificationStatus": "pending",
+    "createdAt": "2026-08-15T08:00:00+00:00",
+    "expiresAt": "2026-08-15T08:30:00+00:00"
+  }
+}`;
+  const verificationExample = `curl --request POST '${baseUrl}/v1/mailboxes/<mailboxId>/verification-code' \\
+  --header 'Content-Type: application/json' \\
+  --header 'X-API-Key: <你的调用密钥>' \\
+  --header 'Authorization: Mailbox <mailboxToken>' \\
+  --data '{
+    "purpose": "openai",
+    "waitSeconds": 20,
+    "pollIntervalSeconds": 2
+  }'`;
+  const verificationResponse = `{
+  "code": 200,
+  "data": {
+    "status": "received",
+    "verificationCode": "123456"
+  }
+}`;
+  const releaseExample = `curl --request DELETE '${baseUrl}/v1/mailboxes/<mailboxId>' \\
+  --header 'X-API-Key: <你的调用密钥>' \\
+  --header 'Authorization: Mailbox <mailboxToken>'`;
+
+  const endpointItems = [
+    {
+      key: "create",
+      label: <ApiEndpointLabel method="POST" path="/v1/mailboxes" title="创建邮箱" />,
+      children: <div className="api-endpoint-content">
+        <Paragraph>创建一个归属于当前调用密钥用户的邮箱。创建前需要配置 POP 授权码并保证积分充足；成功响应中的 <Text code>mailboxId</Text> 和 <Text code>mailboxToken</Text> 请保留，用于后续查询。</Paragraph>
+        <div className="api-doc-auth-row"><span>必需请求头</span><Text code>X-API-Key</Text><Text code>Content-Type: application/json</Text><Text code>Idempotency-Key（建议）</Text></div>
+        <div className="api-param-table">
+          <div className="api-param-row api-param-head"><span>参数</span><span>类型</span><span>必填</span><span>说明</span></div>
+          <div className="api-param-row"><code>purpose</code><span>string</span><span>否</span><span>业务用途，默认 openai，最长 32 字符</span></div>
+          <div className="api-param-row"><code>domain</code><span>string</span><span>否</span><span>指定单个可用域名；不能与 domains 同时传入</span></div>
+          <div className="api-param-row"><code>domains</code><span>string[]</span><span>否</span><span>候选域名列表，最多 100 个</span></div>
+          <div className="api-param-row"><code>addressPattern</code><span>string</span><span>否</span><span>地址生成规则，默认 name_digits_4</span></div>
+          <div className="api-param-row"><code>name</code><span>string</span><span>否</span><span>地址名称，最长 32 字符</span></div>
+          <div className="api-param-row"><code>prefix</code><span>string</span><span>否</span><span>兼容旧版的地址前缀，最长 32 字符</span></div>
+        </div>
+        <Alert type="info" showIcon message="幂等重试" description="同一用户使用相同 Idempotency-Key 和相同参数重试时会返回原邮箱，不会重复创建或扣费；相同键对应不同参数将返回冲突错误。" />
+        <div className="api-code-grid"><ApiCodeBlock title="cURL 请求" code={createExample} /><ApiCodeBlock title="成功响应" code={createResponse} /></div>
+      </div>,
+    },
+    {
+      key: "status",
+      label: <ApiEndpointLabel method="GET" path="/v1/mailboxes/{mailboxId}" title="查询邮箱状态" />,
+      children: <div className="api-endpoint-content">
+        <Paragraph>查询邮箱生命周期和验证码处理状态。常见邮箱状态包括 <Text code>active</Text>、<Text code>expired</Text>、<Text code>released</Text> 和 <Text code>failed</Text>。</Paragraph>
+        <div className="api-doc-auth-row"><span>必需请求头</span><Text code>X-API-Key</Text><Text code>Authorization: Mailbox &lt;mailboxToken&gt;</Text></div>
+        <div className="api-code-grid"><ApiCodeBlock title="cURL 请求" code={statusExample} /><ApiCodeBlock title="成功响应" code={statusResponse} /></div>
+      </div>,
+    },
+    {
+      key: "verification",
+      label: <ApiEndpointLabel method="POST" path="/v1/mailboxes/{mailboxId}/verification-code" title="获取验证码" />,
+      children: <div className="api-endpoint-content">
+        <Paragraph>从邮箱最新邮件中识别验证码。<Text code>pending</Text> 是正常状态，可按业务需要继续轮询；单次等待最长 30 秒。</Paragraph>
+        <div className="api-doc-auth-row"><span>必需请求头</span><Text code>X-API-Key</Text><Text code>Authorization: Mailbox &lt;mailboxToken&gt;</Text><Text code>Content-Type: application/json</Text></div>
+        <div className="api-param-table">
+          <div className="api-param-row api-param-head"><span>参数</span><span>类型</span><span>必填</span><span>说明</span></div>
+          <div className="api-param-row"><code>purpose</code><span>string</span><span>否</span><span>验证码用途标识，最长 32 字符</span></div>
+          <div className="api-param-row"><code>waitSeconds</code><span>integer</span><span>否</span><span>服务端等待秒数，范围 0–30，默认 0</span></div>
+          <div className="api-param-row"><code>pollIntervalSeconds</code><span>number</span><span>否</span><span>上游轮询间隔，范围 0.2–10，默认 2</span></div>
+        </div>
+        <div className="api-code-grid"><ApiCodeBlock title="cURL 请求" code={verificationExample} /><ApiCodeBlock title="收到验证码" code={verificationResponse} /></div>
+      </div>,
+    },
+    {
+      key: "release",
+      label: <ApiEndpointLabel method="DELETE" path="/v1/mailboxes/{mailboxId}" title="释放邮箱" />,
+      children: <div className="api-endpoint-content">
+        <Paragraph>将网关中的邮箱记录标记为 <Text code>released</Text>。释放后普通用户不能继续通过 HTTP 或 POP3 使用该邮箱；该操作不保证删除上游邮箱账号。</Paragraph>
+        <div className="api-doc-auth-row"><span>必需请求头</span><Text code>X-API-Key</Text><Text code>Authorization: Mailbox &lt;mailboxToken&gt;</Text></div>
+        <ApiCodeBlock title="cURL 请求" code={releaseExample} />
+      </div>,
+    },
+  ];
+
+  const errorColumns = [
+    { title: "HTTP", dataIndex: "status", width: 90 },
+    { title: "错误码", dataIndex: "code", width: 230, render: (value: string) => <Text code>{value}</Text> },
+    { title: "说明", dataIndex: "description" },
+  ];
+  const errorData = [
+    { status: 400, code: "DOMAIN_SELECTOR_CONFLICT", description: "domain 与 domains 同时传入" },
+    { status: 400, code: "DOMAIN_NOT_ALLOWED", description: "指定域名不在允许列表" },
+    { status: 401, code: "API_KEY_INVALID", description: "调用密钥无效、已停用或缺失" },
+    { status: 401, code: "MAILBOX_TOKEN_INVALID", description: "邮箱访问凭证无效或与邮箱不匹配" },
+    { status: 401, code: "MAILBOX_SESSION_EXPIRED", description: "HTTP 邮箱会话已经过期" },
+    { status: 402, code: "INSUFFICIENT_CREDITS", description: "当前用户积分不足" },
+    { status: 403, code: "USER_FORBIDDEN", description: "当前用户无权访问该资源" },
+    { status: 404, code: "MAILBOX_NOT_FOUND", description: "邮箱记录不存在" },
+    { status: 409, code: "IDEMPOTENCY_CONFLICT", description: "同一幂等键对应了不同请求参数" },
+    { status: 409, code: "USER_AUTH_CODE_REQUIRED", description: "创建邮箱前尚未配置 POP 授权码" },
+    { status: 429, code: "RATE_LIMITED", description: "请求频率超过限制" },
+    { status: 502, code: "MAILBOX_CREATE_FAILED", description: "上游邮箱创建失败" },
+    { status: 503, code: "NO_AVAILABLE_DOMAIN", description: "当前没有可用邮箱域名" },
+  ];
+
+  return <div className="api-doc-page">
+    <section className="api-doc-hero">
+      <div className="api-doc-hero-copy"><span className="api-doc-kicker"><ApiOutlined /> MAIL GATEWAY API · V1</span><Title level={2}>通过一个接口完成邮箱创建与验证码获取</Title><Paragraph>所有开放业务接口均使用当前用户自己的调用密钥。创建邮箱后保存返回的 mailboxId 和 mailboxToken，即可查询状态、等待验证码或释放邮箱。</Paragraph><Space wrap><Button type="primary" icon={<KeyOutlined />} onClick={() => onNavigate("apiKeys")}>获取调用密钥</Button><Button icon={<SafetyCertificateOutlined />} onClick={() => onNavigate("authCode")}>配置 POP 授权码</Button></Space></div>
+      <div className="api-base-card"><span><GlobalOutlined /> API 基础地址</span><Text code copyable={{ text: baseUrl, tooltips: ["复制地址", "已复制"] }}>{baseUrl}</Text><small>下方示例会自动使用当前访问域名</small></div>
+    </section>
+
+    <div className="api-doc-steps">
+      <div><span>01</span><KeyOutlined /><b>创建调用密钥</b><small>在“我的调用密钥”中生成 X-API-Key</small></div>
+      <div><span>02</span><CodeOutlined /><b>调用创建接口</b><small>保存 mailboxId 与 mailboxToken</small></div>
+      <div><span>03</span><MailOutlined /><b>获取邮件验证码</b><small>按需轮询，收到后停止请求</small></div>
+    </div>
+
+    <Card className="api-doc-auth-card" title={<span><SafetyCertificateOutlined /> 鉴权规则</span>}>
+      <div className="api-auth-grid"><div><Text code>X-API-Key: &lt;用户调用密钥&gt;</Text><span>四个开放接口均必须携带</span></div><div><Text code>Authorization: Mailbox &lt;mailboxToken&gt;</Text><span>查询、验证码和释放接口必须携带</span></div><div><Text code>Idempotency-Key: &lt;唯一业务键&gt;</Text><span>创建邮箱时建议携带，便于安全重试</span></div></div>
+    </Card>
+
+    <section className="api-doc-section"><div className="api-doc-section-head"><div><span>ENDPOINTS</span><Title level={3}>开放接口</Title></div><Tag color="success">共 4 个接口</Tag></div><Collapse className="api-endpoint-collapse" items={endpointItems} defaultActiveKey={["create"]} /></section>
+
+    <Card className="api-error-card" title={<span><CodeOutlined /> 统一错误格式与常见错误码</span>}>
+      <ApiCodeBlock title="错误响应" code={'{\n  "code": "INSUFFICIENT_CREDITS",\n  "message": "积分余额不足"\n}'} />
+      <Table className="dense-table api-error-table" size="small" rowKey="code" columns={errorColumns} dataSource={errorData} pagination={false} scroll={{ x: 680 }} />
+    </Card>
+  </div>;
+}
+
 function SecurityPage({ onUnauthorized }: { onUnauthorized: () => void }) {
   const { message } = AntApp.useApp();
   const [form] = Form.useForm<{ currentPassword: string; newPassword: string; confirm: string }>();
@@ -688,6 +863,7 @@ function UserConsole({ user, onUnauthorized }: { user: UserProfile; onUnauthoriz
     authCode: <AuthCodePage user={currentUser} onConfigured={() => void refreshUser()} />,
     credits: <CreditsPage user={currentUser} />,
     mailboxes: <MailboxesPage />,
+    apiDocs: <ApiDocsPage onNavigate={setPage} />,
     security: <SecurityPage onUnauthorized={onUnauthorized} />,
   })[page], [currentUser, onUnauthorized, page, refreshUser]);
 
