@@ -617,11 +617,80 @@ class UserRepository:
                 return None
             rows = connection.execute(
                 """SELECT id, type, status, amount, balance_after, reference_type,
-                reference_id, remark, created_at FROM credit_transactions
+                reference_id, remark, remark AS reason, reference_type AS description, created_at FROM credit_transactions
                 WHERE user_id=? ORDER BY id DESC LIMIT ?""",
                 (user_id, limit),
             ).fetchall()
         return {"user_id": user_id, "balance": user["credit_balance"], "transactions": [dict(row) for row in rows]}
+
+    def list_credit_packages(self) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                """SELECT id, slug, name, points, price, purchase_url, enabled, created_at, updated_at
+                FROM credit_packages WHERE enabled=1 ORDER BY id DESC"""
+            ).fetchall()
+        return [{**dict(row), "enabled": bool(row["enabled"])} for row in rows]
+
+    def redeem_cdk(self, user_id: int, code: str) -> dict[str, Any]:
+        normalized_code = code.strip().upper()
+        if not normalized_code:
+            raise ValueError("CDK_INVALID")
+        current = utc_now()
+        with self.database.transaction() as connection:
+            user = connection.execute(
+                "SELECT id, role, status FROM users WHERE id=?", (user_id,)
+            ).fetchone()
+            if user is None or user["role"] != "user" or user["status"] != "active":
+                raise ValueError("USER_UNAVAILABLE")
+
+            redeemed = connection.execute(
+                """UPDATE credit_cdks SET status='redeemed', redeemed_by=?, redeemed_at=?
+                WHERE code=? AND status='unused'
+                RETURNING id, package_id, code, points""",
+                (user_id, current, normalized_code),
+            ).fetchone()
+            if redeemed is None:
+                existing = connection.execute(
+                    "SELECT status FROM credit_cdks WHERE code=?", (normalized_code,)
+                ).fetchone()
+                if existing is None:
+                    raise ValueError("CDK_NOT_FOUND")
+                if existing["status"] == "disabled":
+                    raise ValueError("CDK_DISABLED")
+                if existing["status"] == "redeemed":
+                    raise ValueError("CDK_ALREADY_REDEEMED")
+                raise ValueError("CDK_UNAVAILABLE")
+
+            package = connection.execute(
+                "SELECT slug, name FROM credit_packages WHERE id=?", (redeemed["package_id"],)
+            ).fetchone()
+            points = int(redeemed["points"])
+            connection.execute(
+                "UPDATE users SET credit_balance=credit_balance+?, updated_at=? WHERE id=?",
+                (points, current, user_id),
+            )
+            updated = connection.execute(
+                "SELECT credit_balance FROM users WHERE id=?", (user_id,)
+            ).fetchone()
+            inserted_transaction = connection.execute(
+                """INSERT INTO credit_transactions
+                (user_id, type, status, amount, balance_after, reference_type, reference_id, remark, created_at)
+                VALUES (?, 'admin_adjust', 'completed', ?, ?, 'cdk', ?, 'CDK兑换积分', ?) RETURNING id""",
+                (user_id, points, updated["credit_balance"], normalized_code, current),
+            )
+            transaction_id = int(inserted_transaction.fetchone()["id"])
+        return {
+            "cdk_id": int(redeemed["id"]),
+            "code": normalized_code,
+            "package_id": int(redeemed["package_id"]),
+            "package_slug": package["slug"] if package else "",
+            "package_name": package["name"] if package else "",
+            "points": points,
+            "balance": int(updated["credit_balance"]),
+            "balance_after": int(updated["credit_balance"]),
+            "transaction_id": transaction_id,
+            "redeemed_at": current,
+        }
 
     def adjust_credits(self, *, user_id: int, amount: int, reason: str, admin_user_id: int) -> dict[str, Any] | None:
         if amount == 0:

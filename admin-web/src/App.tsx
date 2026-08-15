@@ -7,6 +7,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   GlobalOutlined,
+  GiftOutlined,
   InboxOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
@@ -48,6 +49,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { api, ApiError } from "./api";
+import { CdkAdminPage } from "./cdkAdmin";
 import { UserPortal } from "./UserApp";
 import type {
   AdminUser,
@@ -64,7 +66,7 @@ import type {
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 
-type PageKey = "overview" | "instances" | "domains" | "users" | "creditSettings" | "mailboxes" | "logs" | "settings";
+type PageKey = "overview" | "instances" | "domains" | "users" | "creditSettings" | "cdk" | "mailboxes" | "logs" | "settings";
 
 const navItems = [
   { key: "overview", icon: <DashboardOutlined />, label: "运行概览" },
@@ -72,6 +74,7 @@ const navItems = [
   { key: "domains", icon: <GlobalOutlined />, label: "邮箱域名" },
   { key: "users", icon: <UserOutlined />, label: "用户管理" },
   { key: "creditSettings", icon: <WalletOutlined />, label: "积分/POP 设置" },
+  { key: "cdk", icon: <GiftOutlined />, label: "CDK 套餐" },
   { key: "mailboxes", icon: <InboxOutlined />, label: "邮箱记录" },
   { key: "logs", icon: <DatabaseOutlined />, label: "请求日志" },
   { key: "settings", icon: <SettingOutlined />, label: "系统设置" },
@@ -83,6 +86,7 @@ const pageMeta: Record<PageKey, { title: string; description: string }> = {
   domains: { title: "邮箱域名", description: "维护域名归属、选择权重与冷却状态" },
   users: { title: "用户管理", description: "查看用户状态、积分余额与 POP 授权配置" },
   creditSettings: { title: "积分/POP 设置", description: "配置邮箱积分规则与管理员全局 POP 授权码" },
+  cdk: { title: "CDK 套餐", description: "管理积分套餐、批量生成兑换码与发放状态" },
   mailboxes: { title: "邮箱记录", description: "查看网关创建的邮箱及验证码处理状态" },
   logs: { title: "请求日志", description: "追踪业务请求、响应耗时与脱敏错误信息" },
   settings: { title: "系统设置", description: "查看部署模式、安全边界和运行参数入口" },
@@ -696,7 +700,7 @@ function Console({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const meta = pageMeta[page];
-  const content = useMemo(() => ({ overview: <OverviewPage />, instances: <InstancesPage />, domains: <DomainsPage />, users: <UsersPage />, creditSettings: <CreditSettingsPage />, mailboxes: <MailboxesPage />, logs: <LogsPage />, settings: <SettingsPage /> })[page], [page]);
+  const content = useMemo(() => ({ overview: <OverviewPage />, instances: <InstancesPage />, domains: <DomainsPage />, users: <UsersPage />, creditSettings: <CreditSettingsPage />, cdk: <CdkAdminPage />, mailboxes: <MailboxesPage />, logs: <LogsPage />, settings: <SettingsPage /> })[page], [page]);
   useEffect(() => {
     window.addEventListener("admin-unauthorized", onUnauthorized);
     return () => window.removeEventListener("admin-unauthorized", onUnauthorized);

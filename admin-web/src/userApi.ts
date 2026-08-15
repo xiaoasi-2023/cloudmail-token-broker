@@ -1,4 +1,4 @@
-import type { BatchCreateMailboxesResult, CreditSummary, UserApiKey, UserAuthCodeInfo, UserMailbox, UserProfile } from "./userTypes";
+import type { BatchCreateMailboxesResult, CreditSummary, UserApiKey, UserAuthCodeInfo, UserCdkRedeemResult, UserMailbox, UserProfile } from "./userTypes";
 
 type ApiEnvelope<T> = {
   ok?: boolean;
@@ -136,6 +136,10 @@ export const userApi = {
       transactions: record.transactions || record.items || record.records || [],
     } satisfies CreditSummary;
   },
+  redeemCdk: async (code: string) => unwrap(await request<ApiEnvelope<UserCdkRedeemResult> | UserCdkRedeemResult>("/credits/redeem", {
+    method: "POST",
+    body: JSON.stringify({ code: code.trim() }),
+  })),
   mailboxes: async (keyword = "", purpose = "", status = "", verificationStatus = "") => {
     const params = new URLSearchParams({ limit: "100", offset: "0" });
     if (keyword.trim()) params.set("keyword", keyword.trim());

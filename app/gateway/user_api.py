@@ -79,6 +79,16 @@ class BatchCreateMailboxesRequest(CreateMailboxRequest):
     count: int = Field(default=1, ge=1, le=50)
 
 
+class CdkRedeemRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str = Field(
+        min_length=4,
+        max_length=200,
+        validation_alias=AliasChoices("code", "cdk", "cdk_code", "cdkCode"),
+    )
+
+
 def create_user_router(context: UserApiContext) -> APIRouter:
     router = APIRouter(prefix="/user-api", tags=["user-center"])
     cookie_name = "xiaoasi_user_session"
@@ -233,6 +243,36 @@ def create_user_router(context: UserApiContext) -> APIRouter:
         item = context.users.get_credits(user["id"], limit)
         if item is None:
             raise not_found("用户")
+        return {"ok": True, "data": item}
+
+    @router.get("/credits/packages")
+    @router.get("/credit-packages")
+    async def credit_packages(user: dict[str, Any] = Depends(current_user)):
+        del user
+        return {"ok": True, "data": context.users.list_credit_packages()}
+
+    @router.post("/credits/redeem")
+    @router.post("/credits/redeem-cdk")
+    @router.post("/cdks/redeem")
+    @router.post("/redeem-cdk")
+    async def redeem_cdk(body: CdkRedeemRequest, user: dict[str, Any] = Depends(current_user)):
+        try:
+            item = context.users.redeem_cdk(int(user["id"]), body.code)
+        except ValueError as exc:
+            code = str(exc)
+            messages = {
+                "CDK_INVALID": "CDK 无效",
+                "CDK_NOT_FOUND": "CDK 不存在",
+                "CDK_DISABLED": "CDK 已禁用",
+                "CDK_ALREADY_REDEEMED": "CDK 已被兑换",
+                "CDK_UNAVAILABLE": "CDK 当前不可兑换",
+                "USER_UNAVAILABLE": "用户账号不可用",
+            }
+            status_code = 409 if code in {"CDK_DISABLED", "CDK_ALREADY_REDEEMED", "CDK_UNAVAILABLE"} else 400
+            raise HTTPException(
+                status_code=status_code,
+                detail={"code": code, "message": messages.get(code, code)},
+            ) from exc
         return {"ok": True, "data": item}
 
     @router.get("/mailboxes")

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.gateway.admin_auth import AdminSessionService
 from app.gateway.database import DatabaseIntegrityError
@@ -84,6 +84,53 @@ class CreditAdjustRequest(BaseModel):
 class CreditRuleUpdateRequest(BaseModel):
     cost_points: int = Field(ge=0)
     initial_user_points: int = Field(ge=0)
+
+
+class CreditPackageCreateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    slug: str | None = Field(default=None, min_length=1, max_length=100)
+    name: str | None = Field(default=None, max_length=100)
+    points: int = Field(gt=0)
+    price: int = Field(default=0, ge=0, validation_alias=AliasChoices("price", "amount"))
+    purchase_url: str = Field(
+        default="",
+        max_length=1000,
+        validation_alias=AliasChoices("purchase_url", "purchaseUrl", "purchase_link", "purchaseLink"),
+    )
+    enabled: bool = True
+
+
+class CreditPackageUpdateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    slug: str | None = Field(default=None, min_length=1, max_length=100)
+    name: str | None = Field(default=None, max_length=100)
+    points: int | None = Field(default=None, gt=0)
+    price: int | None = Field(default=None, ge=0, validation_alias=AliasChoices("price", "amount"))
+    purchase_url: str | None = Field(
+        default=None,
+        max_length=1000,
+        validation_alias=AliasChoices("purchase_url", "purchaseUrl", "purchase_link", "purchaseLink"),
+    )
+    enabled: bool | None = None
+
+
+class CdkGenerateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    package_id: int = Field(validation_alias=AliasChoices("package_id", "packageId"))
+    count: int = Field(default=1, ge=1, le=10000, validation_alias=AliasChoices("count", "quantity"))
+
+
+class CdkRedeemRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str = Field(
+        min_length=4,
+        max_length=200,
+        validation_alias=AliasChoices("code", "cdk", "cdk_code", "cdkCode"),
+    )
 
 
 class PopAuthCodeRequest(BaseModel):
@@ -272,6 +319,181 @@ def create_admin_router(context: AdminApiContext) -> APIRouter:
             admin_user_id=admin["id"],
         )
         audit_admin(username, "credit_rule.update", "credit_rule", "create_mailbox", request=request)
+        return {"ok": True, "data": item}
+
+    @router.get("/credit-packages")
+    @router.get("/cdk-packages")
+    @router.get("/packages")
+    async def list_credit_packages(
+        enabled: bool | None = Query(default=None),
+        keyword: str = Query(default="", max_length=100),
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        _username: str = Depends(current_admin),
+    ):
+        return {
+            "ok": True,
+            "data": context.repository.list_credit_packages(
+                enabled=enabled, keyword=keyword, limit=limit, offset=offset
+            ),
+        }
+
+    @router.post("/credit-packages", status_code=201)
+    @router.post("/cdk-packages", status_code=201)
+    @router.post("/packages", status_code=201)
+    async def create_credit_package(
+        body: CreditPackageCreateRequest,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        try:
+            item = context.repository.create_credit_package(body.model_dump())
+        except (DatabaseIntegrityError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409 if isinstance(exc, DatabaseIntegrityError) else 400,
+                detail={"code": "CREDIT_PACKAGE_CREATE_FAILED", "message": str(exc)},
+            ) from exc
+        audit_admin(username, "credit_package.create", "credit_package", str(item["id"]), request=request)
+        return {"ok": True, "data": item}
+
+    @router.get("/credit-packages/{package_id}")
+    @router.get("/cdk-packages/{package_id}")
+    @router.get("/packages/{package_id}")
+    async def get_credit_package(package_id: int, _username: str = Depends(current_admin)):
+        item = context.repository.get_credit_package(package_id)
+        if item is None:
+            raise not_found("积分套餐")
+        return {"ok": True, "data": item}
+
+    @router.patch("/credit-packages/{package_id}")
+    @router.patch("/cdk-packages/{package_id}")
+    @router.patch("/packages/{package_id}")
+    async def update_credit_package(
+        package_id: int,
+        body: CreditPackageUpdateRequest,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        try:
+            item = context.repository.update_credit_package(
+                package_id, body.model_dump(exclude_none=True)
+            )
+        except (DatabaseIntegrityError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409 if isinstance(exc, DatabaseIntegrityError) else 400,
+                detail={"code": "CREDIT_PACKAGE_UPDATE_FAILED", "message": str(exc)},
+            ) from exc
+        if item is None:
+            raise not_found("积分套餐")
+        audit_admin(username, "credit_package.update", "credit_package", str(package_id), request=request)
+        return {"ok": True, "data": item}
+
+    @router.delete("/credit-packages/{package_id}")
+    @router.delete("/cdk-packages/{package_id}")
+    @router.delete("/packages/{package_id}")
+    async def delete_credit_package(
+        package_id: int,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        try:
+            deleted = context.repository.delete_credit_package(package_id)
+        except DatabaseIntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "CREDIT_PACKAGE_IN_USE", "message": "套餐已有 CDK，不能直接删除"},
+            ) from exc
+        if not deleted:
+            raise not_found("积分套餐")
+        audit_admin(username, "credit_package.delete", "credit_package", str(package_id), request=request)
+        return {"ok": True}
+
+    @router.post("/credit-packages/{package_id}/disable")
+    @router.post("/cdk-packages/{package_id}/disable")
+    @router.post("/packages/{package_id}/disable")
+    async def disable_credit_package(
+        package_id: int,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        item = context.repository.disable_credit_package(package_id)
+        if item is None:
+            raise not_found("积分套餐")
+        audit_admin(username, "credit_package.disable", "credit_package", str(package_id), request=request)
+        return {"ok": True, "data": item}
+
+    @router.get("/cdks")
+    @router.get("/credit-cdks")
+    async def list_cdks(
+        status: str = Query(default="", max_length=20),
+        package_id: int | None = Query(default=None),
+        keyword: str = Query(default="", max_length=100),
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        _username: str = Depends(current_admin),
+    ):
+        return {
+            "ok": True,
+            "data": context.repository.list_cdks(
+                status=status,
+                package_id=package_id,
+                keyword=keyword,
+                limit=limit,
+                offset=offset,
+            ),
+        }
+
+    @router.post("/cdks/generate", status_code=201)
+    @router.post("/cdks/batch", status_code=201)
+    @router.post("/credit-cdks/generate", status_code=201)
+    async def generate_cdks(
+        body: CdkGenerateRequest,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        admin = current_admin_user(username)
+        try:
+            items = context.repository.generate_cdks(body.package_id, body.count, int(admin["id"]))
+        except ValueError as exc:
+            code = str(exc)
+            status_code = 404 if code == "PACKAGE_NOT_FOUND" else 409 if code == "PACKAGE_DISABLED" else 400
+            raise HTTPException(
+                status_code=status_code,
+                detail={"code": code, "message": "套餐不存在" if code == "PACKAGE_NOT_FOUND" else "套餐已禁用" if code == "PACKAGE_DISABLED" else code},
+            ) from exc
+        audit_admin(
+            username,
+            "cdk.generate",
+            "credit_package",
+            str(body.package_id),
+            detail=f"count={body.count}",
+            request=request,
+        )
+        return {
+            "ok": True,
+            "data": {
+                "package_id": body.package_id,
+                "quantity": len(items),
+                "items": items,
+            },
+        }
+
+    @router.patch("/cdks/{cdk_id}/disable")
+    @router.post("/cdks/{cdk_id}/disable")
+    @router.patch("/credit-cdks/{cdk_id}/disable")
+    @router.post("/credit-cdks/{cdk_id}/disable")
+    async def disable_cdk(
+        cdk_id: int,
+        request: Request,
+        username: str = Depends(current_admin),
+    ):
+        admin = current_admin_user(username)
+        item = context.repository.disable_cdk(cdk_id, int(admin["id"]))
+        if item is None:
+            raise not_found("CDK")
+        if item["status"] == "redeemed":
+            raise HTTPException(status_code=409, detail={"code": "CDK_ALREADY_REDEEMED", "message": "CDK 已兑换"})
+        audit_admin(username, "cdk.disable", "cdk", str(cdk_id), request=request)
         return {"ok": True, "data": item}
 
     @router.get("/pop-auth-code")

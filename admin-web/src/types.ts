@@ -113,6 +113,35 @@ export interface PopAuthCodeResult {
   updated_at?: string | null;
 }
 
+export interface CreditCdkPackage {
+  id: number;
+  name: string;
+  points: number;
+  purchase_url: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreditCdk {
+  id: number;
+  package_id: number;
+  package_name?: string;
+  points?: number;
+  code: string;
+  status: "unused" | "redeemed" | "disabled" | string;
+  redeemed_by?: number | null;
+  redeemed_username?: string | null;
+  redeemed_at?: string | null;
+  created_at: string;
+}
+
+export interface CreditCdkGenerateResult {
+  package_id: number;
+  quantity: number;
+  items: CreditCdk[];
+}
+
 export interface InstancePayload {
   name: string;
   base_url: string;

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import secrets
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,6 +25,19 @@ def _public_instance(row: Any) -> dict[str, Any]:
 def _public_domain(row: Any) -> dict[str, Any]:
     result = dict(row)
     result["enabled"] = bool(result["enabled"])
+    return result
+
+
+def _public_credit_package(row: Any) -> dict[str, Any]:
+    result = dict(row)
+    result["enabled"] = bool(result["enabled"])
+    return result
+
+
+def _public_cdk(row: Any) -> dict[str, Any]:
+    result = dict(row)
+    if "status" in result:
+        result["enabled"] = result["status"] == "unused"
     return result
 
 
@@ -184,6 +199,215 @@ class GatewayRepository:
                 (SELECT COUNT(*) FROM gateway_request_logs WHERE status_code >= 400) AS error_total"""
             ).fetchone()
         return dict(row)
+
+    def create_credit_package(self, data: dict[str, Any]) -> dict[str, Any]:
+        points = int(data["points"])
+        price = int(data.get("price", 0))
+        if points <= 0:
+            raise ValueError("积分数量必须大于 0")
+        if price < 0:
+            raise ValueError("套餐价格不能为负数")
+        name = str(data.get("name") or f"{points}积分/{price}元").strip()
+        slug = str(data.get("slug") or f"package-{uuid.uuid4().hex}").strip().lower()
+        purchase_url = str(data.get("purchase_url") or "").strip()
+        now = utc_now()
+        with self.database.transaction() as connection:
+            inserted = connection.execute(
+                """INSERT INTO credit_packages
+                (slug, name, points, price, purchase_url, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+                (slug, name, points, price, purchase_url, int(data.get("enabled", True)), now, now),
+            )
+            package_id = int(inserted.fetchone()["id"])
+            row = connection.execute("SELECT * FROM credit_packages WHERE id=?", (package_id,)).fetchone()
+        return _public_credit_package(row)
+
+    def list_credit_packages(
+        self,
+        *,
+        enabled: bool | None = None,
+        keyword: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        normalized_keyword = keyword.strip().lower()
+        if normalized_keyword:
+            like_keyword = f"%{normalized_keyword}%"
+            conditions.append(
+                "(LOWER(p.slug) LIKE ? OR LOWER(p.name) LIKE ? OR LOWER(p.purchase_url) LIKE ?)"
+            )
+            params.extend([like_keyword, like_keyword, like_keyword])
+        if enabled is not None:
+            conditions.append("p.enabled=?")
+            params.append(int(enabled))
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.extend([limit, offset])
+        with self.database.read() as connection:
+            rows = connection.execute(
+                f"""SELECT p.*, COUNT(c.id) AS cdk_total,
+                SUM(CASE WHEN c.status='unused' THEN 1 ELSE 0 END) AS cdk_unused_total,
+                SUM(CASE WHEN c.status='redeemed' THEN 1 ELSE 0 END) AS cdk_redeemed_total
+                FROM credit_packages p LEFT JOIN credit_cdks c ON c.package_id=p.id
+                {where_clause}
+                GROUP BY p.id ORDER BY p.id DESC LIMIT ? OFFSET ?""",
+                params,
+            ).fetchall()
+        return [_public_credit_package(row) for row in rows]
+
+    def get_credit_package(self, package_id: int) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute("SELECT * FROM credit_packages WHERE id=?", (package_id,)).fetchone()
+        return _public_credit_package(row) if row else None
+
+    def update_credit_package(self, package_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
+        current = self.get_credit_package(package_id)
+        if current is None:
+            return None
+        points = int(data.get("points", current["points"]))
+        price = int(data.get("price", current["price"]))
+        if points <= 0:
+            raise ValueError("积分数量必须大于 0")
+        if price < 0:
+            raise ValueError("套餐价格不能为负数")
+        values = {
+            "slug": str(data.get("slug", current["slug"])).strip().lower(),
+            "name": str(data.get("name", current["name"])).strip(),
+            "points": points,
+            "price": price,
+            "purchase_url": str(data.get("purchase_url", current["purchase_url"]) or "").strip(),
+            "enabled": int(data.get("enabled", current["enabled"])),
+            "updated_at": utc_now(),
+            "id": package_id,
+        }
+        with self.database.transaction() as connection:
+            connection.execute(
+                """UPDATE credit_packages SET slug=:slug, name=:name, points=:points, price=:price,
+                purchase_url=:purchase_url, enabled=:enabled, updated_at=:updated_at WHERE id=:id""",
+                values,
+            )
+        return self.get_credit_package(package_id)
+
+    def delete_credit_package(self, package_id: int) -> bool:
+        with self.database.transaction() as connection:
+            cursor = connection.execute("DELETE FROM credit_packages WHERE id=?", (package_id,))
+        return cursor.rowcount > 0
+
+    def disable_credit_package(self, package_id: int) -> dict[str, Any] | None:
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE credit_packages SET enabled=0, updated_at=? WHERE id=?",
+                (utc_now(), package_id),
+            )
+        return self.get_credit_package(package_id)
+
+    def generate_cdks(self, package_id: int, count: int, admin_user_id: int | None = None) -> list[dict[str, Any]]:
+        if count < 1:
+            raise ValueError("CDK 数量必须大于 0")
+        if count > 10000:
+            raise ValueError("单次最多生成 10000 个 CDK")
+        batch_id = uuid.uuid4().hex
+        now = utc_now()
+        generated: list[dict[str, Any]] = []
+        with self.database.transaction() as connection:
+            package = connection.execute(
+                "SELECT id, slug, name, points, enabled FROM credit_packages WHERE id=?",
+                (package_id,),
+            ).fetchone()
+            if package is None:
+                raise ValueError("PACKAGE_NOT_FOUND")
+            if not package["enabled"]:
+                raise ValueError("PACKAGE_DISABLED")
+            for _ in range(count):
+                while True:
+                    code = f"CDK-{secrets.token_hex(12).upper()}"
+                    inserted = connection.execute(
+                        """INSERT INTO credit_cdks
+                        (package_id, code, points, status, generated_by, batch_id, created_at)
+                        VALUES (?, ?, ?, 'unused', ?, ?, ?)
+                        ON CONFLICT(code) DO NOTHING RETURNING id""",
+                        (package_id, code, package["points"], admin_user_id, batch_id, now),
+                    )
+                    inserted_row = inserted.fetchone()
+                    if inserted_row is not None:
+                        cdk_id = int(inserted_row["id"])
+                        generated.append(
+                            {
+                                "id": cdk_id,
+                                "package_id": package_id,
+                                "package_slug": package["slug"],
+                                "package_name": package["name"],
+                                "code": code,
+                                "points": int(package["points"]),
+                                "status": "unused",
+                                "enabled": True,
+                                "generated_by": admin_user_id,
+                                "batch_id": batch_id,
+                                "created_at": now,
+                            }
+                        )
+                        break
+        return generated
+
+    def list_cdks(
+        self,
+        *,
+        status: str = "",
+        package_id: int | None = None,
+        keyword: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        conditions: list[str] = []
+        params: list[Any] = []
+        normalized_status = status.strip().lower()
+        if normalized_status:
+            conditions.append("c.status=?")
+            params.append(normalized_status)
+        if package_id is not None:
+            conditions.append("c.package_id=?")
+            params.append(package_id)
+        normalized_keyword = keyword.strip().lower()
+        if normalized_keyword:
+            like_keyword = f"%{normalized_keyword}%"
+            conditions.append(
+                "(LOWER(c.code) LIKE ? OR LOWER(p.name) LIKE ? OR LOWER(p.slug) LIKE ? OR LOWER(u.username) LIKE ?)"
+            )
+            params.extend([like_keyword, like_keyword, like_keyword, like_keyword])
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.extend([limit, offset])
+        with self.database.read() as connection:
+            rows = connection.execute(
+                f"""SELECT c.*, p.slug AS package_slug, p.name AS package_name,
+                u.username AS redeemed_username
+                FROM credit_cdks c JOIN credit_packages p ON p.id=c.package_id
+                LEFT JOIN users u ON u.id=c.redeemed_by
+                {where_clause}
+                ORDER BY c.id DESC LIMIT ? OFFSET ?""",
+                params,
+            ).fetchall()
+        return [_public_cdk(row) for row in rows]
+
+    def get_cdk(self, cdk_id: int) -> dict[str, Any] | None:
+        with self.database.read() as connection:
+            row = connection.execute(
+                """SELECT c.*, p.slug AS package_slug, p.name AS package_name,
+                u.username AS redeemed_username
+                FROM credit_cdks c JOIN credit_packages p ON p.id=c.package_id
+                LEFT JOIN users u ON u.id=c.redeemed_by WHERE c.id=?""",
+                (cdk_id,),
+            ).fetchone()
+        return _public_cdk(row) if row else None
+
+    def disable_cdk(self, cdk_id: int, admin_user_id: int | None = None) -> dict[str, Any] | None:
+        with self.database.transaction() as connection:
+            connection.execute(
+                """UPDATE credit_cdks SET status='disabled', disabled_at=?, disabled_by=?
+                WHERE id=? AND status='unused'""",
+                (utc_now(), admin_user_id, cdk_id),
+            )
+        return self.get_cdk(cdk_id)
 
     def list_mailboxes(
         self,

@@ -5,6 +5,7 @@ import {
   CopyOutlined,
   DashboardOutlined,
   DeleteOutlined,
+  GiftOutlined,
   InboxOutlined,
   KeyOutlined,
   LockOutlined,
@@ -469,9 +470,11 @@ function AuthCodePage({ user, onConfigured }: { user: UserProfile; onConfigured:
 
 function CreditsPage({ user }: { user: UserProfile }) {
   const { message } = AntApp.useApp();
+  const [redeemForm] = Form.useForm<{ code: string }>();
   const [balance, setBalance] = useState(creditBalance(user));
   const [items, setItems] = useState<CreditTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [redeeming, setRedeeming] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     try { const result = await userApi.credits(); setBalance(result.balance); setItems(result.transactions); }
@@ -479,6 +482,30 @@ function CreditsPage({ user }: { user: UserProfile }) {
     finally { setLoading(false); }
   }, [message]);
   useEffect(() => { void load(); }, [load]);
+
+  const redeem = async ({ code }: { code: string }) => {
+    const normalizedCode = code.trim();
+    if (!normalizedCode) return;
+    setRedeeming(true);
+    try {
+      const result = await userApi.redeemCdk(normalizedCode);
+      await load();
+      redeemForm.resetFields();
+      message.success(`兑换成功，获得 ${result.points} 积分`);
+    } catch (error) {
+      if (error instanceof UserApiError && error.status === 404) {
+        message.error("当前服务暂未提供 CDK 兑换接口");
+      } else {
+        message.error(getErrorMessage(error));
+      }
+    } finally { setRedeeming(false); }
+  };
+
+  const redemptionItems = items.filter((item) => {
+    const type = String(item.type || "").toLowerCase();
+    const reason = `${item.reason || ""} ${item.description || ""}`.toLowerCase();
+    return type.includes("cdk") || type.includes("redeem") || reason.includes("cdk") || reason.includes("兑换");
+  });
 
   const columns: ColumnsType<CreditTransaction> = [
     { title: "时间", key: "created_at", width: 180, render: (_, item) => formatTime(item.created_at || item.createdAt) },
@@ -489,8 +516,26 @@ function CreditsPage({ user }: { user: UserProfile }) {
   ];
 
   return <>
+    <div className="user-overview-grid">
+      <Card className="user-welcome-card" title={<span><GiftOutlined /> CDK 兑换</span>}>
+        <Paragraph type="secondary">输入兑换码，兑换获得的积分会立即计入当前账户。</Paragraph>
+        <Form form={redeemForm} layout="vertical" requiredMark={false} onFinish={(values) => void redeem(values)}>
+          <Form.Item label="兑换码" name="code" rules={[{ required: true, message: "请输入兑换码" }]}>
+            <Space.Compact block>
+              <Input placeholder="输入 CDK 兑换码" autoComplete="off" allowClear />
+              <Button type="primary" htmlType="submit" loading={redeeming}>立即兑换</Button>
+            </Space.Compact>
+          </Form.Item>
+        </Form>
+      </Card>
+      <Card title="积分概览">
+        <Statistic title="当前余额" value={loading ? "—" : balance} suffix="分" prefix={<WalletOutlined />} />
+      </Card>
+    </div>
     <div className="toolbar"><Space size={18}><Text strong>当前余额：<Text className="success-text">{loading ? "—" : balance} 分</Text></Text><Text type="secondary">最近积分变更摘要</Text></Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>
-    <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={userTablePagination} locale={{ emptyText: <Empty description="暂无积分变更记录" /> }} scroll={{ x: 700 }} />
+    <Card title="最近兑换记录">
+      <Table rowKey="id" loading={loading} columns={columns} dataSource={redemptionItems} pagination={userTablePagination} locale={{ emptyText: <Empty description="暂无 CDK 兑换记录" /> }} scroll={{ x: 700 }} />
+    </Card>
   </>;
 }
 

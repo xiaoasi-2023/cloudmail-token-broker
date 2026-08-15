@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError as DatabaseIntegrityError
 from sqlalchemy.pool import StaticPool
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 logger = logging.getLogger("xiaoasi_mail_gateway.database")
 
 
@@ -328,6 +328,34 @@ class GatewayDatabase:
                     remark TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS credit_packages (
+                    id {id_definition},
+                    slug TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    points BIGINT NOT NULL CHECK(points > 0),
+                    price BIGINT NOT NULL DEFAULT 0 CHECK(price >= 0),
+                    purchase_url TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS credit_cdks (
+                    id {id_definition},
+                    package_id BIGINT NOT NULL REFERENCES credit_packages(id),
+                    code TEXT NOT NULL UNIQUE,
+                    points BIGINT NOT NULL CHECK(points > 0),
+                    status TEXT NOT NULL DEFAULT 'unused'
+                        CHECK(status IN ('unused', 'redeemed', 'disabled')),
+                    generated_by BIGINT REFERENCES users(id),
+                    redeemed_by BIGINT REFERENCES users(id),
+                    redeemed_at TEXT,
+                    disabled_at TEXT,
+                    disabled_by BIGINT REFERENCES users(id),
+                    batch_id TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             current = connection.execute("SELECT version FROM gateway_schema LIMIT 1").fetchone()
@@ -457,6 +485,10 @@ class GatewayDatabase:
                 CREATE INDEX IF NOT EXISTS idx_user_registration_codes_expires
                     ON user_registration_codes(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_credit_transactions_user ON credit_transactions(user_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_credit_packages_enabled ON credit_packages(enabled, id);
+                CREATE INDEX IF NOT EXISTS idx_credit_cdks_status ON credit_cdks(status, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_credit_cdks_package ON credit_cdks(package_id, status, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_credit_cdks_redeemed_by ON credit_cdks(redeemed_by, redeemed_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_mailboxes_owner ON mailboxes(owner_user_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_request_logs_user ON gateway_request_logs(user_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
@@ -467,6 +499,31 @@ class GatewayDatabase:
                 VALUES ('create_mailbox', 1, 0, ?)
                 ON CONFLICT(operation) DO NOTHING""",
                 (datetime.now(UTC).isoformat(),),
+            )
+            now = datetime.now(UTC).isoformat()
+            connection.execute(
+                """INSERT INTO credit_packages
+                (slug, name, points, price, purchase_url, enabled, created_at, updated_at)
+                VALUES ('default-1000', '1000积分', 1000, 0, 'https://pay.ldxp.cn/item/9z9op3', 1, ?, ?)
+                ON CONFLICT(slug) DO NOTHING""",
+                (now, now),
+            )
+            connection.execute(
+                """INSERT INTO credit_packages
+                (slug, name, points, price, purchase_url, enabled, created_at, updated_at)
+                VALUES ('default-10000', '10000积分', 10000, 0, 'https://pay.ldxp.cn/item/vjxbeh', 1, ?, ?)
+                ON CONFLICT(slug) DO NOTHING""",
+                (now, now),
+            )
+            connection.execute(
+                """UPDATE credit_packages SET purchase_url=?, updated_at=?
+                WHERE slug='default-1000' AND purchase_url=''""",
+                ('https://pay.ldxp.cn/item/9z9op3', now),
+            )
+            connection.execute(
+                """UPDATE credit_packages SET purchase_url=?, updated_at=?
+                WHERE slug='default-10000' AND purchase_url=''""",
+                ('https://pay.ldxp.cn/item/vjxbeh', now),
             )
             connection.execute("UPDATE gateway_schema SET version = ?", (SCHEMA_VERSION,))
             if current_version != SCHEMA_VERSION:

@@ -70,6 +70,13 @@ export interface CreditSummary {
   transactions: CreditTransaction[];
 }
 
+export interface UserCdkRedeemResult {
+  points: number;
+  balance: number;
+  redeemed_at?: string;
+  transaction_id?: number;
+}
+
 export interface UserMailbox {
   id: string | number;
   mailbox_id?: string;

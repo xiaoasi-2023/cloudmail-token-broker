@@ -171,7 +171,7 @@ def test_schema_upgrade_adds_persisted_verification_code_column(tmp_path: Path) 
         mailbox = connection.execute("SELECT verification_code FROM mailboxes WHERE id='mbx-old'").fetchone()
 
     assert "verification_code" in columns
-    assert version == SCHEMA_VERSION == 7
+    assert version == SCHEMA_VERSION
     assert mailbox["verification_code"] == ""
 
 

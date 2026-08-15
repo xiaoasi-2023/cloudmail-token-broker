@@ -2,6 +2,9 @@ import type {
   AdminUser,
   CloudMailInstance,
   CreditAdjustResult,
+  CreditCdk,
+  CreditCdkGenerateResult,
+  CreditCdkPackage,
   CreditRule,
   DomainPayload,
   InstancePayload,
@@ -108,4 +111,22 @@ export const api = {
   adminPopAuthCode: async () => (await request<ApiEnvelope<PopAuthCodeResult>>("/pop-auth-code")).data,
   setAdminPopAuthCode: (authCode: string) =>
     request<ApiEnvelope<PopAuthCodeResult>>("/pop-auth-code", { method: "PUT", body: JSON.stringify({ auth_code: authCode }) }),
+  cdkPackages: async () => (await request<ApiEnvelope<CreditCdkPackage[]>>("/credit-packages")).data,
+  createCdkPackage: (data: Pick<CreditCdkPackage, "name" | "points" | "purchase_url" | "enabled">) =>
+    request<ApiEnvelope<CreditCdkPackage>>("/credit-packages", { method: "POST", body: JSON.stringify(data) }),
+  updateCdkPackage: (id: number, data: Partial<Pick<CreditCdkPackage, "name" | "points" | "purchase_url" | "enabled">>) =>
+    request<ApiEnvelope<CreditCdkPackage>>(`/credit-packages/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  cdks: async (params: { limit?: number; offset?: number; keyword?: string; packageId?: number; status?: string } = {}) => {
+    const query = new URLSearchParams({ limit: String(params.limit ?? 100), offset: String(params.offset ?? 0) });
+    if (params.keyword?.trim()) query.set("keyword", params.keyword.trim());
+    if (params.packageId) query.set("package_id", String(params.packageId));
+    if (params.status?.trim()) query.set("status", params.status.trim());
+    return (await request<ApiEnvelope<CreditCdk[]>>(`/cdks?${query.toString()}`)).data;
+  },
+  generateCdks: (packageId: number, quantity: number) =>
+    request<ApiEnvelope<CreditCdk[] | CreditCdkGenerateResult>>("/cdks/generate", { method: "POST", body: JSON.stringify({ package_id: packageId, count: quantity }) }).then((response) => {
+      const data = response.data;
+      return { ...response, data: Array.isArray(data) ? { package_id: packageId, quantity: data.length, items: data } : data };
+    }),
+  disableCdk: (id: number) => request<ApiEnvelope<CreditCdk>>(`/cdks/${id}/disable`, { method: "POST" }),
 };
