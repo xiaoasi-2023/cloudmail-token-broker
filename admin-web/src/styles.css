@@ -313,6 +313,33 @@ button, input, textarea { font: inherit; }
 .auth-code-auto-panel small { margin-top: 6px; color: #747c78; line-height: 1.6; }
 .user-auth-action-card .ant-btn-primary { min-width: 190px; height: 44px; }
 .user-security-grid .ant-divider { border-color: #dedfd8; }
+.credit-purchase-card { border: 1px solid #d5d6cf; background: #fffdf8; }
+.credit-purchase-card > .ant-card-head { min-height: 92px; border-bottom-color: #dedfd8; }
+.credit-section-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; width: 100%; }
+.credit-section-title h3.ant-typography { margin: 4px 0 2px; font-size: 25px; letter-spacing: -.04em; }
+.credit-section-title p.ant-typography { margin: 0; color: #7f8883; font-size: 13px; font-weight: 400; }
+.credit-package-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.credit-package-card { position: relative; overflow: hidden; border-color: #d8ddd6; background: #f8f9f3; transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+.credit-package-card::after { content: ""; position: absolute; width: 150px; height: 150px; right: -62px; top: -72px; border: 1px solid rgba(57,117,95,.18); border-radius: 50%; box-shadow: 0 0 0 14px rgba(57,117,95,.04), 0 0 0 28px rgba(57,117,95,.03); pointer-events: none; }
+.credit-package-card:hover { transform: translateY(-3px); border-color: #9cbaa8; box-shadow: 0 12px 28px rgba(39,62,51,.1); }
+.credit-package-card.featured { background: linear-gradient(145deg, #fff8f1 0%, #f8f4ea 100%); border-color: #e4c6b4; }
+.credit-package-top { display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 1; }
+.credit-package-top > .anticon { color: #39755f; font-size: 21px; }
+.credit-package-card.featured .credit-package-top > .anticon { color: #d46936; }
+.credit-package-points { display: flex; align-items: baseline; gap: 8px; margin-top: 23px; position: relative; z-index: 1; }
+.credit-package-points strong { color: #26382e; font: 600 clamp(30px, 3vw, 43px)/1 "IBM Plex Mono", monospace; letter-spacing: -.07em; }
+.credit-package-points span { color: #39755f; font-size: 14px; font-weight: 600; }
+.credit-package-name { display: block; margin-top: 10px; color: #303b35; font-size: 16px; font-weight: 600; position: relative; z-index: 1; }
+.credit-package-desc { display: block; min-height: 40px; margin-top: 8px; color: #7d8781; font-size: 12px; line-height: 1.65; position: relative; z-index: 1; }
+.credit-package-buy { position: relative; z-index: 1; margin-top: 18px; }
+.credit-package-loading { min-height: 150px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.credit-purchase-foot { display: flex; justify-content: space-between; gap: 16px; margin-top: 15px; padding-top: 13px; border-top: 1px solid #e2e4dc; font-size: 12px; }
+.credit-action-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(240px, .55fr); gap: 20px; margin-top: 20px; }
+.credit-redeem-card .ant-card-body { min-height: 190px; }
+.credit-balance-card { border: 1px solid #d5d6cf; background: #fffdf8; }
+.credit-balance-card .ant-statistic { margin: 24px 0 14px; }
+.credit-balance-card .ant-statistic-content { color: #26302b; font-family: "IBM Plex Mono", monospace; }
+.credit-balance-card .ant-statistic-content-prefix { color: #39755f; }
 @media (max-width: 900px) {
   .user-login-shell { grid-template-columns: 1fr; }
   .user-login-shell.is-register { grid-template-columns: 1fr; }
@@ -322,6 +349,7 @@ button, input, textarea { font: inherit; }
   .admin-pop-current { grid-template-columns: 1fr auto; }
   .admin-pop-current > div { grid-column: 1 / -1; }
   .user-auth-grid, .user-security-grid { grid-template-columns: 1fr; }
+  .credit-action-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {
   .user-login-aside { min-height: 300px; }
@@ -333,6 +361,10 @@ button, input, textarea { font: inherit; }
   .user-welcome-card .ant-card-body { display: block; padding: 28px; }
   .user-welcome-card h2 { font-size: 28px; }
   .user-welcome-badge { margin-top: 25px; }
+  .credit-package-grid { grid-template-columns: 1fr; }
+  .credit-section-title { display: block; }
+  .credit-section-title > .ant-tag { display: inline-flex; margin-top: 12px; }
+  .credit-purchase-foot { align-items: flex-start; flex-direction: column; gap: 5px; }
   .preflight-item { grid-template-columns: 28px 22px 1fr; gap: 8px; }
   .preflight-item .ant-btn { grid-column: 3; justify-self: start; padding-left: 0; }
   .user-aside-foot { font-size: 9px; }

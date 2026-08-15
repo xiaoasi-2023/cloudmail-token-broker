@@ -11,6 +11,7 @@ import {
   LockOutlined,
   LogoutOutlined,
   MailOutlined,
+  LinkOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   PlusOutlined,
@@ -48,7 +49,7 @@ import type { InputRef } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { UserApiError, userApi } from "./userApi";
-import type { BatchCreateMailboxesResult, CreditTransaction, UserApiKey, UserAuthCodeInfo, UserMailbox, UserProfile } from "./userTypes";
+import type { BatchCreateMailboxesResult, CreditTransaction, UserApiKey, UserAuthCodeInfo, UserCreditPackage, UserMailbox, UserProfile } from "./userTypes";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -68,7 +69,7 @@ const userPageMeta: Record<UserPageKey, { title: string; description: string }> 
   overview: { title: "账户概览", description: "查看当前账户状态、积分和邮箱接入准备情况" },
   apiKeys: { title: "我的调用密钥", description: "管理用于调用网关业务 API 的用户级 X-API-Key" },
   authCode: { title: "我的 POP 授权码", description: "查看和管理 POP3 的完整连接参数" },
-  credits: { title: "我的积分", description: "查看余额和最近的积分变更摘要" },
+  credits: { title: "我的积分", description: "购买积分、兑换 CDK 并查看积分变更记录" },
   mailboxes: { title: "我的邮箱", description: "查看当前账户创建的邮箱及其生命周期状态" },
   security: { title: "账号安全", description: "修改登录密码、撤销会话并安全退出用户中心" },
 };
@@ -473,13 +474,23 @@ function CreditsPage({ user }: { user: UserProfile }) {
   const [redeemForm] = Form.useForm<{ code: string }>();
   const [balance, setBalance] = useState(creditBalance(user));
   const [items, setItems] = useState<CreditTransaction[]>([]);
+  const [packages, setPackages] = useState<UserCreditPackage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [packagesLoading, setPackagesLoading] = useState(true);
+  const [packageError, setPackageError] = useState("");
   const [redeeming, setRedeeming] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
-    try { const result = await userApi.credits(); setBalance(result.balance); setItems(result.transactions); }
-    catch (error) { message.error(getErrorMessage(error)); }
-    finally { setLoading(false); }
+    setPackagesLoading(true);
+    setPackageError("");
+    try {
+      const [result, packageItems] = await Promise.all([userApi.credits(), userApi.creditPackages()]);
+      setBalance(result.balance);
+      setItems(result.transactions);
+      setPackages(packageItems.filter((item) => item.enabled !== false));
+    }
+    catch (error) { setPackageError(getErrorMessage(error)); message.error(getErrorMessage(error)); }
+    finally { setLoading(false); setPackagesLoading(false); }
   }, [message]);
   useEffect(() => { void load(); }, [load]);
 
@@ -515,10 +526,28 @@ function CreditsPage({ user }: { user: UserProfile }) {
     { title: "说明", key: "reason", render: (_, item) => item.reason || item.description || "—" },
   ];
 
+  const formatPoints = (points: number) => new Intl.NumberFormat("zh-CN").format(points);
+
   return <>
-    <div className="user-overview-grid">
-      <Card className="user-welcome-card" title={<span><GiftOutlined /> CDK 兑换</span>}>
-        <Paragraph type="secondary">输入兑换码，兑换获得的积分会立即计入当前账户。</Paragraph>
+    <Card className="credit-purchase-card" title={<div className="credit-section-title"><div><Text className="section-index">CREDIT STORE</Text><Title level={3}>购买积分</Title><Paragraph>选择积分套餐，完成购买后将获得 CDK 兑换码，再回到这里兑换到账。</Paragraph></div><Tag color="success">支持即时兑换</Tag></div>}>
+      {packageError ? <Alert type="error" showIcon message="积分套餐暂时无法加载" description={packageError} action={<Button size="small" onClick={() => void load()}>重新加载</Button>} /> : packagesLoading ? <div className="credit-package-loading"><Spin /><Text type="secondary">正在加载可购买套餐…</Text></div> : packages.length ? <div className="credit-package-grid">
+        {packages.map((item, index) => {
+          const purchaseUrl = item.purchase_url || item.purchaseUrl || "";
+          return <Card key={item.id} className={`credit-package-card ${index === 0 ? "featured" : ""}`} bordered>
+            <div className="credit-package-top"><Tag color={index === 0 ? "orange" : "green"}>{index === 0 ? "大额套餐" : "基础套餐"}</Tag><GiftOutlined /></div>
+            <div className="credit-package-points"><strong>{formatPoints(item.points)}</strong><span>积分</span></div>
+            <Text className="credit-package-name">{item.name}</Text>
+            <Text className="credit-package-desc">购买后获得一次性 CDK，兑换后立即计入账户余额</Text>
+            {purchaseUrl ? <Button className="credit-package-buy" type={index === 0 ? "primary" : "default"} block href={purchaseUrl} target="_blank" rel="noreferrer" icon={<LinkOutlined />}>购买此套餐</Button> : <Button className="credit-package-buy" block disabled>暂未开放购买</Button>}
+          </Card>;
+        })}
+      </div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可购买积分套餐" />}
+      <div className="credit-purchase-foot"><Text type="secondary">购买完成后，请妥善保存订单返回的 CDK 兑换码。</Text><Text type="secondary">每个 CDK 只能兑换一次</Text></div>
+    </Card>
+
+    <div className="credit-action-grid">
+      <Card className="user-welcome-card credit-redeem-card" title={<span><GiftOutlined /> CDK 兑换</span>}>
+        <Paragraph type="secondary">输入购买获得的兑换码，积分会立即计入当前账户。</Paragraph>
         <Form form={redeemForm} layout="vertical" requiredMark={false} onFinish={(values) => void redeem(values)}>
           <Form.Item label="兑换码" name="code" rules={[{ required: true, message: "请输入兑换码" }]}>
             <Space.Compact block>
@@ -528,8 +557,9 @@ function CreditsPage({ user }: { user: UserProfile }) {
           </Form.Item>
         </Form>
       </Card>
-      <Card title="积分概览">
+      <Card className="credit-balance-card" title="积分概览">
         <Statistic title="当前余额" value={loading ? "—" : balance} suffix="分" prefix={<WalletOutlined />} />
+        <Text type="secondary">余额用于创建邮箱等网关服务</Text>
       </Card>
     </div>
     <div className="toolbar"><Space size={18}><Text strong>当前余额：<Text className="success-text">{loading ? "—" : balance} 分</Text></Text><Text type="secondary">最近积分变更摘要</Text></Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>

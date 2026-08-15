@@ -77,6 +77,17 @@ export interface UserCdkRedeemResult {
   transaction_id?: number;
 }
 
+export interface UserCreditPackage {
+  id: string | number;
+  slug?: string;
+  name: string;
+  points: number;
+  price?: number;
+  purchase_url?: string;
+  purchaseUrl?: string;
+  enabled?: boolean;
+}
+
 export interface UserMailbox {
   id: string | number;
   mailbox_id?: string;
