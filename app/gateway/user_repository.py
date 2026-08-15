@@ -623,6 +623,18 @@ class UserRepository:
             ).fetchall()
         return {"user_id": user_id, "balance": user["credit_balance"], "transactions": [dict(row) for row in rows]}
 
+    def list_cdk_redemptions(self, user_id: int, limit: int = 20) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                """SELECT id, type, status, amount, balance_after, reference_type,
+                reference_id, remark, remark AS reason, reference_type AS description, created_at
+                FROM credit_transactions
+                WHERE user_id=? AND reference_type='cdk'
+                ORDER BY id DESC LIMIT ?""",
+                (user_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_credit_packages(self) -> list[dict[str, Any]]:
         with self.database.read() as connection:
             rows = connection.execute(

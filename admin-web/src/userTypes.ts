@@ -61,6 +61,9 @@ export interface CreditTransaction {
   type?: string;
   reason?: string;
   description?: string;
+  reference_id?: string;
+  referenceId?: string;
+  remark?: string;
   created_at?: string;
   createdAt?: string;
 }

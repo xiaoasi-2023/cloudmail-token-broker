@@ -146,6 +146,52 @@ def test_user_redeem_is_transactional_and_idempotently_rejected(tmp_path: Path) 
     assert credits.json()["data"]["balance"] == 10000
 
 
+def test_cdk_redemption_history_is_not_hidden_by_consumption_records(tmp_path: Path) -> None:
+    database, repository, users = build_database(tmp_path / "cdk-history.db")
+    user = users.create_user(username="cdk-history", password="cdk-history-password")
+    package_id = repository.list_credit_packages()[0]["id"]
+    code = repository.generate_cdks(package_id, 1)[0]["code"]
+    sessions = UserSessionService(database, users, ttl_seconds=3600)
+    app = FastAPI()
+    app.include_router(create_user_router(UserApiContext(users=users, sessions=sessions, cookie_secure=False)))
+
+    with TestClient(app) as client:
+        assert client.post(
+            "/user-api/auth/login",
+            json={"username": "cdk-history", "password": "cdk-history-password"},
+        ).status_code == 200
+        assert client.post("/user-api/credits/redeem-cdk", json={"code": code}).status_code == 200
+
+        with database.transaction() as connection:
+            for index in range(30):
+                connection.execute(
+                    """INSERT INTO credit_transactions
+                    (user_id, type, status, amount, balance_after, reference_type,
+                    reference_id, remark, created_at)
+                    VALUES (?, 'consume', 'completed', -1, ?, 'mailbox', ?, '创建邮箱扣除积分', ?)""",
+                    (
+                        user["id"],
+                        9999 - index,
+                        f"mailbox-{index}",
+                        "2026-08-15T00:00:00+00:00",
+                    ),
+                )
+            connection.execute(
+                "UPDATE users SET credit_balance=? WHERE id=?",
+                (9970, user["id"]),
+            )
+
+        recent = client.get("/user-api/credits?limit=20")
+        redemptions = client.get("/user-api/credits/cdk-redemptions?limit=20")
+
+    assert recent.status_code == 200
+    assert all(item["reference_type"] != "cdk" for item in recent.json()["data"]["transactions"])
+    assert redemptions.status_code == 200
+    assert len(redemptions.json()["data"]) == 1
+    assert redemptions.json()["data"][0]["reference_id"] == code
+    assert redemptions.json()["data"][0]["amount"] == 10000
+
+
 def test_concurrent_redeem_has_exactly_one_success(tmp_path: Path) -> None:
     database, repository, users = build_database(tmp_path / "cdk-concurrency.db")
     user_a = users.create_user(username="cdk-a", password="cdk-a-password")

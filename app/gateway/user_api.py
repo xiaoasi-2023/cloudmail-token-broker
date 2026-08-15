@@ -251,6 +251,13 @@ def create_user_router(context: UserApiContext) -> APIRouter:
         del user
         return {"ok": True, "data": context.users.list_credit_packages()}
 
+    @router.get("/credits/cdk-redemptions")
+    async def cdk_redemptions(
+        limit: int = Query(default=20, ge=1, le=100),
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {"ok": True, "data": context.users.list_cdk_redemptions(int(user["id"]), limit)}
+
     @router.post("/credits/redeem")
     @router.post("/credits/redeem-cdk")
     @router.post("/cdks/redeem")

@@ -141,6 +141,7 @@ export const userApi = {
     body: JSON.stringify({ code: code.trim() }),
   })),
   creditPackages: async () => asList<UserCreditPackage>(unwrap(await request<ApiEnvelope<unknown> | unknown>("/credits/packages", { cache: "no-store" }))),
+  cdkRedemptions: async (limit = 20) => asList<CreditSummary["transactions"][number]>(unwrap(await request<ApiEnvelope<unknown> | unknown>(`/credits/cdk-redemptions?limit=${limit}`, { cache: "no-store" }))),
   mailboxes: async (keyword = "", purpose = "", status = "", verificationStatus = "") => {
     const params = new URLSearchParams({ limit: "100", offset: "0" });
     if (keyword.trim()) params.set("keyword", keyword.trim());

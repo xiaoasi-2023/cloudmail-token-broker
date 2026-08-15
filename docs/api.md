@@ -34,6 +34,7 @@
 | GET/PUT | `/user-api/auth-code` | 查询或保存用户 POP 授权码明文及 POP3 连接参数 |
 | GET | `/user-api/credits` | 查询积分余额和流水摘要 |
 | GET | `/user-api/credits/packages` | 查询当前启用的积分套餐（别名：`/user-api/credit-packages`） |
+| GET | `/user-api/credits/cdk-redemptions` | 独立查询当前用户的 CDK 兑换记录，不受普通积分流水数量影响 |
 | POST | `/user-api/credits/redeem` | 兑换 CDK 并增加当前用户积分（别名：`/user-api/credits/redeem-cdk`、`/user-api/cdks/redeem`、`/user-api/redeem-cdk`） |
 | GET | `/user-api/mailboxes` | 查询自己的邮箱记录 |
 | POST | `/user-api/mailboxes/batch` | 批量创建 1 至 50 个自己的 POP 邮箱 |
@@ -382,6 +383,7 @@ Content-Type: application/json
 ### 11.4 用户套餐查询与兑换
 
 - `GET /user-api/credits/packages`（别名：`/user-api/credit-packages`）只返回启用套餐，包含 `id`、`slug`、`name`、`points`、`price`、`purchase_url` 和 `enabled`。
+- `GET /user-api/credits/cdk-redemptions` 只查询 `reference_type=cdk` 的兑换流水，支持 `limit`（默认20，上限100），不会被创建邮箱等消耗流水挤出列表。
 - `POST /user-api/credits/redeem`（别名：`/user-api/cdks/redeem`、`/user-api/redeem-cdk`）请求体为 `{"code":"CDK-..."}`；`code` 也接受 `cdk`、`cdk_code` 和 `cdkCode` 别名，服务端会统一转为大写。
 - 成功数据包含 `cdk_id`、`code`、`package_id`、`package_slug`、`package_name`、`points`、`balance_after` 和 `redeemed_at`。
 - 无效、不存在、已禁用、已兑换或用户不可用时，分别返回对应的 `CDK_INVALID`、`CDK_NOT_FOUND`、`CDK_DISABLED`、`CDK_ALREADY_REDEEMED` 或 `USER_UNAVAILABLE`。已禁用和已兑换是 `409`，其他是 `400`。

@@ -473,7 +473,7 @@ function CreditsPage({ user }: { user: UserProfile }) {
   const { message } = AntApp.useApp();
   const [redeemForm] = Form.useForm<{ code: string }>();
   const [balance, setBalance] = useState(creditBalance(user));
-  const [items, setItems] = useState<CreditTransaction[]>([]);
+  const [redemptionItems, setRedemptionItems] = useState<CreditTransaction[]>([]);
   const [packages, setPackages] = useState<UserCreditPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [packagesLoading, setPackagesLoading] = useState(true);
@@ -484,13 +484,18 @@ function CreditsPage({ user }: { user: UserProfile }) {
     setPackagesLoading(true);
     setPackageError("");
     try {
-      const [result, packageItems] = await Promise.all([userApi.credits(), userApi.creditPackages()]);
-      setBalance(result.balance);
-      setItems(result.transactions);
-      setPackages(packageItems.filter((item) => item.enabled !== false));
-    }
-    catch (error) { setPackageError(getErrorMessage(error)); message.error(getErrorMessage(error)); }
-    finally { setLoading(false); setPackagesLoading(false); }
+      const [creditResult, packageResult, redemptionResult] = await Promise.allSettled([
+        userApi.credits(),
+        userApi.creditPackages(),
+        userApi.cdkRedemptions(100),
+      ]);
+      if (creditResult.status === "fulfilled") setBalance(creditResult.value.balance);
+      else message.error(getErrorMessage(creditResult.reason));
+      if (packageResult.status === "fulfilled") setPackages(packageResult.value.filter((item) => item.enabled !== false));
+      else setPackageError(getErrorMessage(packageResult.reason));
+      if (redemptionResult.status === "fulfilled") setRedemptionItems(redemptionResult.value);
+      else message.error(`兑换记录加载失败：${getErrorMessage(redemptionResult.reason)}`);
+    } finally { setLoading(false); setPackagesLoading(false); }
   }, [message]);
   useEffect(() => { void load(); }, [load]);
 
@@ -512,59 +517,41 @@ function CreditsPage({ user }: { user: UserProfile }) {
     } finally { setRedeeming(false); }
   };
 
-  const redemptionItems = items.filter((item) => {
-    const type = String(item.type || "").toLowerCase();
-    const reason = `${item.reason || ""} ${item.description || ""}`.toLowerCase();
-    return type.includes("cdk") || type.includes("redeem") || reason.includes("cdk") || reason.includes("兑换");
-  });
-
   const columns: ColumnsType<CreditTransaction> = [
     { title: "时间", key: "created_at", width: 180, render: (_, item) => formatTime(item.created_at || item.createdAt) },
-    { title: "变更", dataIndex: "amount", width: 100, render: (value: number) => <Text className={value >= 0 ? "success-text" : "error-text"}>{value >= 0 ? `+${value}` : value}</Text> },
-    { title: "变更后余额", key: "balance", width: 120, render: (_, item) => item.balance_after ?? item.balance ?? "—" },
-    { title: "类型", dataIndex: "type", width: 120, render: (value) => value || "—" },
-    { title: "说明", key: "reason", render: (_, item) => item.reason || item.description || "—" },
+    { title: "获得积分", dataIndex: "amount", width: 110, render: (value: number) => <Text className="success-text" strong>+{value}</Text> },
+    { title: "兑换后余额", key: "balance", width: 125, render: (_, item) => item.balance_after ?? item.balanceAfter ?? item.balance ?? "—" },
+    { title: "兑换码", key: "code", width: 280, render: (_, item) => { const code = item.reference_id || item.referenceId || ""; return code ? <Text code copyable={{ text: code }}>{code}</Text> : "—"; } },
+    { title: "说明", key: "reason", render: (_, item) => item.remark || item.reason || "CDK 兑换积分" },
   ];
 
   const formatPoints = (points: number) => new Intl.NumberFormat("zh-CN").format(points);
 
   return <>
-    <Card className="credit-purchase-card" title={<div className="credit-section-title"><div><Text className="section-index">CREDIT STORE</Text><Title level={3}>购买积分</Title><Paragraph>选择积分套餐，完成购买后将获得 CDK 兑换码，再回到这里兑换到账。</Paragraph></div><Tag color="success">支持即时兑换</Tag></div>}>
+    <Card className="credit-purchase-card" title={<div className="credit-section-title"><GiftOutlined /><div><b>购买积分</b><span>购买后获得 CDK，在下方兑换到账</span></div></div>} extra={<Text type="secondary">每个 CDK 仅可使用一次</Text>}>
       {packageError ? <Alert type="error" showIcon message="积分套餐暂时无法加载" description={packageError} action={<Button size="small" onClick={() => void load()}>重新加载</Button>} /> : packagesLoading ? <div className="credit-package-loading"><Spin /><Text type="secondary">正在加载可购买套餐…</Text></div> : packages.length ? <div className="credit-package-grid">
         {packages.map((item, index) => {
           const purchaseUrl = item.purchase_url || item.purchaseUrl || "";
-          return <Card key={item.id} className={`credit-package-card ${index === 0 ? "featured" : ""}`} bordered>
-            <div className="credit-package-top"><Tag color={index === 0 ? "orange" : "green"}>{index === 0 ? "大额套餐" : "基础套餐"}</Tag><GiftOutlined /></div>
-            <div className="credit-package-points"><strong>{formatPoints(item.points)}</strong><span>积分</span></div>
-            <Text className="credit-package-name">{item.name}</Text>
-            <Text className="credit-package-desc">购买后获得一次性 CDK，兑换后立即计入账户余额</Text>
-            {purchaseUrl ? <Button className="credit-package-buy" type={index === 0 ? "primary" : "default"} block href={purchaseUrl} target="_blank" rel="noreferrer" icon={<LinkOutlined />}>购买此套餐</Button> : <Button className="credit-package-buy" block disabled>暂未开放购买</Button>}
-          </Card>;
+          return <div key={item.id} className={`credit-package-card ${index === 0 ? "featured" : ""}`}>
+            <div className="credit-package-copy"><div><Tag color={index === 0 ? "orange" : "green"}>{index === 0 ? "大额套餐" : "基础套餐"}</Tag><Text className="credit-package-name">{item.name}</Text></div><div className="credit-package-points"><strong>{formatPoints(item.points)}</strong><span>积分</span></div></div>
+            {purchaseUrl ? <Button className="credit-package-buy" type={index === 0 ? "primary" : "default"} href={purchaseUrl} target="_blank" rel="noreferrer" icon={<LinkOutlined />}>立即购买</Button> : <Button className="credit-package-buy" disabled>暂未开放</Button>}
+          </div>;
         })}
       </div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可购买积分套餐" />}
-      <div className="credit-purchase-foot"><Text type="secondary">购买完成后，请妥善保存订单返回的 CDK 兑换码。</Text><Text type="secondary">每个 CDK 只能兑换一次</Text></div>
     </Card>
 
-    <div className="credit-action-grid">
-      <Card className="user-welcome-card credit-redeem-card" title={<span><GiftOutlined /> CDK 兑换</span>}>
-        <Paragraph type="secondary">输入购买获得的兑换码，积分会立即计入当前账户。</Paragraph>
-        <Form form={redeemForm} layout="vertical" requiredMark={false} onFinish={(values) => void redeem(values)}>
-          <Form.Item label="兑换码" name="code" rules={[{ required: true, message: "请输入兑换码" }]}>
-            <Space.Compact block>
-              <Input placeholder="输入 CDK 兑换码" autoComplete="off" allowClear />
-              <Button type="primary" htmlType="submit" loading={redeeming}>立即兑换</Button>
-            </Space.Compact>
-          </Form.Item>
-        </Form>
-      </Card>
-      <Card className="credit-balance-card" title="积分概览">
-        <Statistic title="当前余额" value={loading ? "—" : balance} suffix="分" prefix={<WalletOutlined />} />
-        <Text type="secondary">余额用于创建邮箱等网关服务</Text>
-      </Card>
-    </div>
-    <div className="toolbar"><Space size={18}><Text strong>当前余额：<Text className="success-text">{loading ? "—" : balance} 分</Text></Text><Text type="secondary">最近积分变更摘要</Text></Space><Button icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button></div>
-    <Card title="最近兑换记录">
-      <Table rowKey="id" loading={loading} columns={columns} dataSource={redemptionItems} pagination={userTablePagination} locale={{ emptyText: <Empty description="暂无 CDK 兑换记录" /> }} scroll={{ x: 700 }} />
+    <Card className="credit-redeem-panel">
+      <div className="credit-redeem-copy"><div className="credit-redeem-icon"><GiftOutlined /></div><div><b>兑换 CDK</b><span>输入购买获得的兑换码，积分立即到账</span></div></div>
+      <Form form={redeemForm} requiredMark={false} onFinish={(values) => void redeem(values)} className="credit-redeem-form">
+        <Form.Item name="code" rules={[{ required: true, message: "请输入兑换码" }]}>
+          <Space.Compact block><Input size="large" placeholder="请输入 CDK 兑换码" autoComplete="off" allowClear /><Button size="large" type="primary" htmlType="submit" loading={redeeming}>立即兑换</Button></Space.Compact>
+        </Form.Item>
+      </Form>
+      <div className="credit-balance-inline"><span>当前余额</span><div><WalletOutlined /><strong>{loading ? "—" : formatPoints(balance)}</strong><em>分</em></div><small>用于创建邮箱等网关服务</small></div>
+    </Card>
+
+    <Card className="credit-history-card" title={<span><WalletOutlined /> CDK 兑换记录</span>} extra={<Button size="small" icon={<ReloadOutlined />} onClick={() => void load()}>刷新</Button>}>
+      <Table className="dense-table" size="small" rowKey="id" loading={loading} columns={columns} dataSource={redemptionItems} pagination={userTablePagination} locale={{ emptyText: <Empty description="暂无 CDK 兑换记录" /> }} scroll={{ x: 900 }} />
     </Card>
   </>;
 }
