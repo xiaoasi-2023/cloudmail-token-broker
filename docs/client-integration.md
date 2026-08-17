@@ -55,7 +55,7 @@ X-API-Key: 用户自己创建的调用密钥
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
-| `purpose` | string | 否 | `openai` | 用途，例如 `openai`、`grok` |
+| `purpose` | string | 否 | `openai` | 验证码识别用途，推荐值为 `openai`、`kiro`、`cursor`、`grok`，详细映射见下表 |
 | `domain` | string | 否 | 无 | 指定一个邮箱域名 |
 | `domains` | string[] | 否 | 无 | 限定候选域名范围 |
 | `addressPattern` | string | 否 | `name_digits_4` | 用户名生成规则 |
@@ -63,6 +63,30 @@ X-API-Key: 用户自己创建的调用密钥
 | `prefix` | string | 否 | 空 | 旧客户端兼容字段 |
 
 `domain` 和 `domains` 不能同时传。不传时由网关根据实例健康状态、域名状态和权重自动选择。
+
+`purpose` 映射：
+
+| 值 | 对应业务 | 验证码识别格式 |
+| --- | --- | --- |
+| `openai` | OpenAI / ChatGPT | 6 位数字；默认值 |
+| `kiro` | Kiro / AWS Builder ID | 6 位数字 |
+| `cursor` | Cursor | 6 位数字 |
+| `grok` | Grok / xAI | `ABC-123` 格式的字母数字组合 |
+| 其他 1 至 32 字符的值 | 通用业务 | 依赖验证码关键词识别 4 至 8 位数字，准确率不如内置规则 |
+
+服务端会去除 `purpose` 首尾空格并统一转换为小写，建议调用方直接使用表中的小写值。
+
+`addressPattern` 映射：
+
+| 值 | 地址用户名格式 |
+| --- | --- |
+| `name_digits_4` | 名称 + 4 位数字，例如 `demo4821`；默认值 |
+| `name_digits_6` | 名称 + 6 位数字 |
+| `name_random_6` | 名称 + 6 位小写字母或数字 |
+| `random_12` | 12 位小写字母或数字，忽略名称 |
+| `legacy_prefix_random` | 名称 + `-` + 12 位小写字母或数字 |
+
+名称优先使用 `name`，其次使用兼容字段 `prefix`；系统只保留小写字母和数字并截取前 16 位。未提供有效名称时自动生成英文姓名。
 
 创建邮箱前，网关校验：
 
@@ -128,6 +152,10 @@ Content-Type: application/json
 ```
 
 `pending` 是正常业务状态，不应当作接口异常。建议服务端单次等待 15～20 秒，调用方不要高频并发轮询同一邮箱。
+
+验证码接口中的 `purpose` 可省略或传空字符串，此时沿用创建邮箱时保存的用途；只有需要临时切换验证码识别规则时才传入其他值。
+
+该接口响应中的 `data.status` 只有 `received` 和 `pending`。单次等待结束但仍未识别到验证码时，接口返回 `pending` 和空字符串，同时邮箱记录的 `verificationStatus` 会更新为 `timeout`。
 
 收到验证码：
 

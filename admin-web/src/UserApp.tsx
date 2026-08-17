@@ -714,14 +714,43 @@ function ApiDocsPage({ onNavigate }: { onNavigate: (page: UserPageKey) => void }
         <div className="api-doc-auth-row"><span>必需请求头</span><Text code>X-API-Key</Text><Text code>Content-Type: application/json</Text><Text code>Idempotency-Key（建议）</Text></div>
         <div className="api-param-table">
           <div className="api-param-row api-param-head"><span>参数</span><span>类型</span><span>必填</span><span>说明</span></div>
-          <div className="api-param-row"><code>purpose</code><span>string</span><span>否</span><span>业务用途，默认 openai，最长 32 字符</span></div>
+          <div className="api-param-row"><code>purpose</code><span>string</span><span>否</span><span>业务用途，默认 openai；推荐值和验证码格式见下方映射</span></div>
           <div className="api-param-row"><code>domain</code><span>string</span><span>否</span><span>指定单个可用域名；不能与 domains 同时传入</span></div>
           <div className="api-param-row"><code>domains</code><span>string[]</span><span>否</span><span>候选域名列表，最多 100 个</span></div>
           <div className="api-param-row"><code>addressPattern</code><span>string</span><span>否</span><span>地址生成规则，默认 name_digits_4</span></div>
           <div className="api-param-row"><code>name</code><span>string</span><span>否</span><span>地址名称，最长 32 字符</span></div>
           <div className="api-param-row"><code>prefix</code><span>string</span><span>否</span><span>兼容旧版的地址前缀，最长 32 字符</span></div>
         </div>
+        <div className="api-doc-mapping-grid">
+          <div className="api-doc-mapping-card">
+            <div className="api-doc-mapping-title"><b>purpose 用途映射</b><span>影响验证码识别规则</span></div>
+            <div className="api-value-row"><Text code>openai</Text><div><b>OpenAI / ChatGPT</b><span>识别 6 位数字验证码；默认值</span></div></div>
+            <div className="api-value-row"><Text code>kiro</Text><div><b>Kiro / AWS Builder ID</b><span>识别 6 位数字验证码</span></div></div>
+            <div className="api-value-row"><Text code>cursor</Text><div><b>Cursor</b><span>识别 6 位数字验证码</span></div></div>
+            <div className="api-value-row"><Text code>grok</Text><div><b>Grok / xAI</b><span>识别 ABC-123 格式的字母数字验证码</span></div></div>
+            <div className="api-value-row"><Text code>其他值</Text><div><b>通用验证码</b><span>允许 1–32 个字符，按验证码关键词识别 4–8 位数字，准确率不如专属规则</span></div></div>
+          </div>
+          <div className="api-doc-mapping-card">
+            <div className="api-doc-mapping-title"><b>addressPattern 地址规则</b><span>决定邮箱 @ 前面的用户名</span></div>
+            <div className="api-value-row"><Text code>name_digits_4</Text><div><b>名称 + 4 位数字</b><span>示例 demo4821；默认值</span></div></div>
+            <div className="api-value-row"><Text code>name_digits_6</Text><div><b>名称 + 6 位数字</b><span>示例 demo482193</span></div></div>
+            <div className="api-value-row"><Text code>name_random_6</Text><div><b>名称 + 6 位随机字符</b><span>小写字母和数字，例如 demoa7k2m9</span></div></div>
+            <div className="api-value-row"><Text code>random_12</Text><div><b>12 位完全随机字符</b><span>忽略 name 和 prefix</span></div></div>
+            <div className="api-value-row"><Text code>legacy_prefix_random</Text><div><b>名称 + 连字符 + 12 位随机字符</b><span>兼容旧版地址格式</span></div></div>
+          </div>
+        </div>
+        <Alert type="info" showIcon message="purpose 不区分大小写" description="服务端会先去除首尾空格并统一转为小写保存。建议直接使用表中的小写值，便于后续查询和筛选保持一致。" />
+        <Alert type="warning" showIcon message="name 和 prefix 的处理规则" description="优先使用 name，其次使用 prefix；只保留小写字母和数字并截取前 16 位。留空、清洗后为空或使用 admin、root、support 等保留名称时，系统会自动生成英文姓名作为基础值。" />
         <Alert type="info" showIcon message="幂等重试" description="同一用户使用相同 Idempotency-Key 和相同参数重试时会返回原邮箱，不会重复创建或扣费；相同键对应不同参数将返回冲突错误。" />
+        <div className="api-param-table">
+          <div className="api-param-row api-param-head"><span>响应字段</span><span>类型</span><span>是否为空</span><span>说明</span></div>
+          <div className="api-param-row"><code>mailboxId</code><span>string</span><span>否</span><span>邮箱在网关中的唯一 ID，后续接口路径参数</span></div>
+          <div className="api-param-row"><code>address</code><span>string</span><span>否</span><span>创建成功的完整邮箱地址</span></div>
+          <div className="api-param-row"><code>domain</code><span>string</span><span>否</span><span>本次实际选中的邮箱域名</span></div>
+          <div className="api-param-row"><code>mailboxToken</code><span>string</span><span>否</span><span>HTTP 邮箱访问凭证，查询、验证码和释放接口使用</span></div>
+          <div className="api-param-row"><code>createdAt</code><span>ISO 8601</span><span>否</span><span>邮箱创建时间，包含时区</span></div>
+          <div className="api-param-row"><code>expiresAt</code><span>ISO 8601</span><span>否</span><span>HTTP 会话过期时间，不代表 POP3 邮箱失效时间</span></div>
+        </div>
         <div className="api-code-grid"><ApiCodeBlock title="cURL 请求" code={createExample} /><ApiCodeBlock title="成功响应" code={createResponse} /></div>
       </div>,
     },
@@ -729,8 +758,22 @@ function ApiDocsPage({ onNavigate }: { onNavigate: (page: UserPageKey) => void }
       key: "status",
       label: <ApiEndpointLabel method="GET" path="/v1/mailboxes/{mailboxId}" title="查询邮箱状态" />,
       children: <div className="api-endpoint-content">
-        <Paragraph>查询邮箱生命周期和验证码处理状态。常见邮箱状态包括 <Text code>active</Text>、<Text code>expired</Text>、<Text code>released</Text> 和 <Text code>failed</Text>。</Paragraph>
+        <Paragraph>查询邮箱生命周期和验证码处理状态。返回的 <Text code>status</Text> 与 <Text code>verificationStatus</Text> 是两套独立状态。</Paragraph>
         <div className="api-doc-auth-row"><span>必需请求头</span><Text code>X-API-Key</Text><Text code>Authorization: Mailbox &lt;mailboxToken&gt;</Text></div>
+        <div className="api-doc-mapping-grid">
+          <div className="api-doc-mapping-card compact">
+            <div className="api-doc-mapping-title"><b>status 邮箱状态</b><span>邮箱生命周期</span></div>
+            <div className="api-value-row"><Text code>active</Text><div><b>使用中</b><span>HTTP 会话仍有效</span></div></div>
+            <div className="api-value-row"><Text code>expired</Text><div><b>HTTP 会话过期</b><span>HTTP Token 失效；符合条件时 POP3 仍可读取</span></div></div>
+            <div className="api-value-row"><Text code>released</Text><div><b>已释放</b><span>用户已主动释放，不能继续使用</span></div></div>
+          </div>
+          <div className="api-doc-mapping-card compact">
+            <div className="api-doc-mapping-title"><b>verificationStatus 验证码状态</b><span>验证码识别进度</span></div>
+            <div className="api-value-row"><Text code>pending</Text><div><b>等待中</b><span>尚未识别到验证码</span></div></div>
+            <div className="api-value-row"><Text code>received</Text><div><b>已收到</b><span>已成功识别并保存验证码</span></div></div>
+            <div className="api-value-row"><Text code>timeout</Text><div><b>本次等待超时</b><span>可以在会话有效期内继续查询</span></div></div>
+          </div>
+        </div>
         <div className="api-code-grid"><ApiCodeBlock title="cURL 请求" code={statusExample} /><ApiCodeBlock title="成功响应" code={statusResponse} /></div>
       </div>,
     },
@@ -742,10 +785,12 @@ function ApiDocsPage({ onNavigate }: { onNavigate: (page: UserPageKey) => void }
         <div className="api-doc-auth-row"><span>必需请求头</span><Text code>X-API-Key</Text><Text code>Authorization: Mailbox &lt;mailboxToken&gt;</Text><Text code>Content-Type: application/json</Text></div>
         <div className="api-param-table">
           <div className="api-param-row api-param-head"><span>参数</span><span>类型</span><span>必填</span><span>说明</span></div>
-          <div className="api-param-row"><code>purpose</code><span>string</span><span>否</span><span>验证码用途标识，最长 32 字符</span></div>
+          <div className="api-param-row"><code>purpose</code><span>string</span><span>否</span><span>不传或传空字符串时沿用创建邮箱时的 purpose；传值时覆盖本次识别规则</span></div>
           <div className="api-param-row"><code>waitSeconds</code><span>integer</span><span>否</span><span>服务端等待秒数，范围 0–30，默认 0</span></div>
           <div className="api-param-row"><code>pollIntervalSeconds</code><span>number</span><span>否</span><span>上游轮询间隔，范围 0.2–10，默认 2</span></div>
         </div>
+        <Alert type="info" showIcon message="purpose 建议保持一致" description="通常无需在验证码接口重复传 purpose，系统会使用创建邮箱时保存的值。只有需要临时切换识别规则时才覆盖；可用映射与创建接口中的 purpose 表完全一致。" />
+        <Alert type="warning" showIcon message="验证码接口的 status 只有两种" description="识别成功返回 received 和 verificationCode；尚未识别到验证码（包括本次等待结束）返回 pending 和空字符串。timeout 只会记录在邮箱的 verificationStatus 中。" />
         <div className="api-code-grid"><ApiCodeBlock title="cURL 请求" code={verificationExample} /><ApiCodeBlock title="收到验证码" code={verificationResponse} /></div>
       </div>,
     },
@@ -768,16 +813,21 @@ function ApiDocsPage({ onNavigate }: { onNavigate: (page: UserPageKey) => void }
   const errorData = [
     { status: 400, code: "DOMAIN_SELECTOR_CONFLICT", description: "domain 与 domains 同时传入" },
     { status: 400, code: "DOMAIN_NOT_ALLOWED", description: "指定域名不在允许列表" },
+    { status: 400, code: "ADDRESS_PATTERN_INVALID", description: "addressPattern 不是文档列出的固定值" },
     { status: 401, code: "API_KEY_INVALID", description: "调用密钥无效、已停用或缺失" },
     { status: 401, code: "MAILBOX_TOKEN_INVALID", description: "邮箱访问凭证无效或与邮箱不匹配" },
     { status: 401, code: "MAILBOX_SESSION_EXPIRED", description: "HTTP 邮箱会话已经过期" },
     { status: 402, code: "INSUFFICIENT_CREDITS", description: "当前用户积分不足" },
-    { status: 403, code: "USER_FORBIDDEN", description: "当前用户无权访问该资源" },
+    { status: 403, code: "MAILBOX_ACCESS_DENIED", description: "调用密钥或当前用户无权访问该邮箱" },
     { status: 404, code: "MAILBOX_NOT_FOUND", description: "邮箱记录不存在" },
     { status: 409, code: "IDEMPOTENCY_CONFLICT", description: "同一幂等键对应了不同请求参数" },
     { status: 409, code: "USER_AUTH_CODE_REQUIRED", description: "创建邮箱前尚未配置 POP 授权码" },
     { status: 429, code: "RATE_LIMITED", description: "请求频率超过限制" },
     { status: 502, code: "MAILBOX_CREATE_FAILED", description: "上游邮箱创建失败" },
+    { status: 502, code: "MAILBOX_QUERY_FAILED", description: "上游邮件查询失败" },
+    { status: 503, code: "CREDIT_UNAVAILABLE", description: "积分服务当前不可用" },
+    { status: 503, code: "DOMAIN_UNAVAILABLE", description: "指定的单个域名当前不可用" },
+    { status: 503, code: "INSTANCE_UNAVAILABLE", description: "邮箱所属上游实例当前不可用" },
     { status: 503, code: "NO_AVAILABLE_DOMAIN", description: "当前没有可用邮箱域名" },
   ];
 

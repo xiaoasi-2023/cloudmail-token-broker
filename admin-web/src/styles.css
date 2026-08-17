@@ -413,6 +413,18 @@ button, input, textarea { font: inherit; }
 .api-param-row > code { color: #315d48; font: 600 11px "IBM Plex Mono", monospace; }
 .api-param-head { min-height: 38px; background: #eef0e9; }
 .api-param-head > span { color: #717a75; font-size: 11px; font-weight: 600; }
+.api-doc-mapping-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.api-doc-mapping-card { overflow: hidden; border: 1px solid #d9dcd4; background: #fffdf8; }
+.api-doc-mapping-title { min-height: 56px; display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 13px 15px; border-bottom: 1px solid #dfe1da; background: #eef1ea; }
+.api-doc-mapping-title b { color: #2e3a33; font-size: 13px; }
+.api-doc-mapping-title span { color: #818985; font-size: 10px; text-align: right; }
+.api-value-row { min-height: 59px; display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid #e5e6e0; }
+.api-value-row:last-child { border-bottom: 0; }
+.api-value-row > .ant-typography { width: fit-content; max-width: 100%; margin: 0; color: #356049; background: #edf3ee; font: 600 10px "IBM Plex Mono", monospace; overflow-wrap: anywhere; }
+.api-value-row b, .api-value-row span { display: block; }
+.api-value-row b { color: #303a35; font-size: 12px; }
+.api-value-row span { margin-top: 3px; color: #7b847f; font-size: 10px; line-height: 1.5; }
+.api-doc-mapping-card.compact .api-value-row { min-height: 54px; }
 .api-code-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .api-doc-code-block { min-width: 0; overflow: hidden; border: 1px solid #34463d; background: #17211c; }
 .api-doc-code-head { height: 40px; padding: 0 13px; display: flex; align-items: center; justify-content: space-between; color: #93a69b; border-bottom: 1px solid #34463d; background: #202d27; font-size: 11px; }
@@ -436,7 +448,7 @@ button, input, textarea { font: inherit; }
   .api-doc-steps, .api-auth-grid { grid-template-columns: 1fr; }
   .api-doc-steps > div { border-right: 0; border-bottom: 1px solid #dedfd8; }
   .api-doc-steps > div:last-child { border-bottom: 0; }
-  .api-code-grid { grid-template-columns: 1fr; }
+  .api-code-grid, .api-doc-mapping-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 680px) {
   .user-login-aside { min-height: 300px; }
@@ -462,6 +474,7 @@ button, input, textarea { font: inherit; }
   .api-endpoint-label > span { grid-column: 2; }
   .api-param-table { overflow-x: auto; }
   .api-param-row { min-width: 650px; }
+  .api-value-row { grid-template-columns: 132px minmax(0, 1fr); }
   .preflight-item { grid-template-columns: 28px 22px 1fr; gap: 8px; }
   .preflight-item .ant-btn { grid-column: 3; justify-self: start; padding-left: 0; }
   .user-aside-foot { font-size: 9px; }

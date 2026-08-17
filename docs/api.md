@@ -153,6 +153,30 @@ X-API-Key: xmk_user_key
 - 同一用户、同一幂等键和相同参数返回原邮箱，不重复扣费；
 - 不同用户使用相同幂等键互不影响。
 
+`purpose` 会保存到邮箱记录，并决定验证码识别规则。字段允许 1 至 32 个字符，推荐使用以下内置值：
+
+| purpose | 对应业务 | 验证码格式与规则 |
+| --- | --- | --- |
+| `openai` | OpenAI / ChatGPT | 识别 OpenAI/ChatGPT 邮件中的 6 位数字验证码；默认值 |
+| `kiro` | Kiro / AWS Builder ID | 识别 AWS Builder ID 邮件中的 6 位数字验证码 |
+| `cursor` | Cursor | 识别 Cursor 邮件中的 6 位数字验证码 |
+| `grok` | Grok / xAI | 识别 `ABC-123` 格式的字母数字验证码 |
+| 其他自定义值 | 通用业务 | 按验证码关键词识别 4 至 8 位数字，准确率不如内置专属规则 |
+
+服务端会去除 `purpose` 首尾空格并统一转为小写保存。验证码接口不传 `purpose` 或传空字符串时，自动沿用创建邮箱时保存的值；传入非空值时只覆盖本次识别规则，不修改邮箱记录。
+
+`addressPattern` 支持以下固定值：
+
+| addressPattern | 地址用户名格式 |
+| --- | --- |
+| `name_digits_4` | 清洗后的名称 + 4 位数字，例如 `demo4821`；默认值 |
+| `name_digits_6` | 清洗后的名称 + 6 位数字 |
+| `name_random_6` | 清洗后的名称 + 6 位小写字母或数字 |
+| `random_12` | 12 位小写字母或数字，忽略 `name` 和 `prefix` |
+| `legacy_prefix_random` | 清洗后的名称 + `-` + 12 位小写字母或数字 |
+
+名称优先读取 `name`，其次读取 `prefix`；只保留小写字母和数字并截取前 16 位。留空、清洗后为空或命中 `admin`、`administrator`、`postmaster`、`root`、`support`、`system` 等保留名称时，系统自动生成英文姓名作为基础值。
+
 成功响应：
 
 ```json
@@ -257,6 +281,10 @@ Content-Type: application/json
 ```
 
 `pending` 是正常业务状态，不代表接口异常。调用方应控制轮询频率，直到收到验证码、业务超时或邮箱过期。
+
+验证码接口响应中的 `data.status` 只有 `received` 和 `pending`：识别成功返回 `received` 及验证码；尚未识别到验证码（包括本次等待结束）返回 `pending` 和空字符串。`timeout` 只记录在邮箱的 `verificationStatus` 中，可通过状态接口查询。
+
+当前公开接口返回的邮箱状态 `status` 为：`active`（HTTP 会话有效）、`expired`（HTTP 会话过期，但符合条件时 POP3 仍可读取）或 `released`（已主动释放）。验证码状态 `verificationStatus` 为：`pending`（等待中）、`received`（已识别）或 `timeout`（本次等待超时）。上游查询失败会直接返回 `MAILBOX_QUERY_FAILED` HTTP 错误，不会伪装成状态值。
 
 ## 7. 释放邮箱
 
